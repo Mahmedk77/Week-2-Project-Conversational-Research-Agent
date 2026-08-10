@@ -14,7 +14,7 @@ export function EmptyState({ onSelect }: { onSelect: (text: string) => void }) {
       <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-text-primary text-bg-page">
         <BotMessageSquare className="h-8 w-8" strokeWidth={1.75} />
       </div>
-      <h1 className="text-2xl font-medium text-text-primary">Hi, there</h1>
+      <h1 className="text-2xl font-medium text-text-primary">Hi, there!</h1>
       <p className="mt-1.5 text-[15px] text-text-primary/60">
         Ask me anything about LangChain, Supabase, or n8n
       </p>

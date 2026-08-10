@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { KeyboardEvent } from "react";
 import { ChevronUp } from "lucide-react";
+
+const MAX_TEXTAREA_HEIGHT = 200;
 
 export function ChatInput({
   value,
@@ -16,6 +18,13 @@ export function ChatInput({
   disabled: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
+  }, [value]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -35,8 +44,11 @@ export function ChatInput({
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask anything"
-            className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-relaxed text-text-primary placeholder-text-primary/40 outline-none"
-            style={{ minHeight: "1.75rem" }}
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck="false"
+            className="no-scrollbar flex-1 resize-none appearance-none overflow-y-auto bg-transparent py-1.5 text-[15px] leading-relaxed text-text-primary placeholder-text-primary/40 outline-none"
+            style={{ minHeight: "1.75rem", maxHeight: `${MAX_TEXTAREA_HEIGHT}px` }}
           />
 
           <button

@@ -129,7 +129,7 @@ export async function POST(request: Request) {
                             { role: "user" as const, content: message },
                         ],
                     },
-                    { recursionLimit: 10, streamMode: "messages" }
+                    { recursionLimit: 6, streamMode: "messages" }
                 );
                 const reasoningTrace: any[] = [];
 
