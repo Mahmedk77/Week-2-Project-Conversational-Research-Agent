@@ -2,8 +2,6 @@
 
 Streaming AI agent with tool calling and session memory, built on LangChain's `createAgent` (LangGraph-backed) and Groq.
 
-**Deviation from roadmap spec:** uses `createAgent()` + `tool()` + Zod instead of `AgentExecutor`/`DynamicTool` (removed in `langchain@1.5.5`). Same ReAct pattern, current API.
-
 ## What it does
 - Agent with 2 tools: Tavily web search, Supabase knowledge base lookup
 - Session memory: Supabase-backed, auto-summarized across turns
