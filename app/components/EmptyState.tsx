@@ -25,7 +25,7 @@ export function EmptyState({ onSelect }: { onSelect: (text: string) => void }) {
             key={text}
             type="button"
             onClick={() => onSelect(text)}
-            className="flex flex-col items-start gap-2.5 rounded-2xl border border-border bg-surface-1 p-3.5 text-left transition-colors hover:bg-border/50 active:bg-border/50"
+            className="flex flex-col items-start gap-2.5 rounded-2xl border border-border bg-surface-1 p-3.5 text-left transition-colors hover:bg-border/30  active:bg-border/50"
           >
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-border/50 text-text-primary/70">
               <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
