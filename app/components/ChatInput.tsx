@@ -2,19 +2,17 @@
 
 import { useRef } from "react";
 import type { KeyboardEvent } from "react";
-import { ChevronUp, Plus, Send, Trash2 } from "lucide-react";
+import { ChevronUp } from "lucide-react";
 
 export function ChatInput({
   value,
   onChange,
   onSend,
-  onClearMemory,
   disabled,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
-  onClearMemory: () => void;
   disabled: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -30,16 +28,6 @@ export function ChatInput({
     <div className="sticky bottom-0 w-full bg-gradient-to-t from-bg-page via-bg-page to-transparent pb-[max(env(safe-area-inset-bottom),0px)] pt-4">
       <div className="mx-auto w-full max-w-[720px] px-4">
         <div className="flex items-end gap-2 rounded-3xl border border-border bg-surface-1 px-3 py-2 shadow-none transition-shadow focus-within:ring-2 focus-within:ring-border">
-          <button
-            type="button"
-            onClick={onClearMemory}
-            aria-label="Clear memory"
-            title="Clear memory"
-            className="h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-primary/40 transition-colors hover:bg-border/60 hover:text-text-primary/70 active:text-text-primary hidden sm:flex"
-          >
-            <Trash2 className="h-4.5 w-4.5" strokeWidth={1.75} />
-          </button>
-
           <textarea
             ref={textareaRef}
             rows={1}

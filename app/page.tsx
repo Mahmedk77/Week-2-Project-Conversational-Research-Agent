@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { ChatInput } from "./components/ChatInput";
 import { ChatMessageItem } from "./components/ChatMessageItem";
 import { EmptyState } from "./components/EmptyState";
-import { Trash2 } from "lucide-react";
 import type { ChatMessage, ReasoningStep } from "./components/types";
 
 const DELIMITER = "\n__REASONING_TRACE__\n";
@@ -151,9 +150,8 @@ export default function Home() {
           type="button"
           onClick={handleClearMemory}
           disabled={clearing}
-          className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] text-text-primary/60 transition-colors  hover:text-text-primary/90 disabled:opacity-40"
+          className="flex min-h-11 items-center gap-1.5 rounded-full px-3.5 text-[13px] text-text-primary/60 transition-colors hover:text-text-primary/90 disabled:opacity-40"
         >
-          {/* <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} /> */}
           Clear memory
         </button>
       </header>
@@ -176,7 +174,6 @@ export default function Home() {
           value={input}
           onChange={setInput}
           onSend={() => sendMessage(input)}
-          onClearMemory={handleClearMemory}
           disabled={isStreaming}
         />
       </div>

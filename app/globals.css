@@ -34,3 +34,17 @@ body {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Shows a fade at whichever edge still has scrollable content; self-hides
+   once fully scrolled. Pure CSS, no JS scroll listener needed. */
+.scroll-fade-x {
+  background:
+    linear-gradient(to right, var(--surface-1) 30%, transparent) left,
+    linear-gradient(to left, var(--surface-1) 30%, transparent) right,
+    linear-gradient(to right, rgba(20, 20, 19, 0.12), transparent) left,
+    linear-gradient(to left, rgba(20, 20, 19, 0.12), transparent) right;
+  background-repeat: no-repeat;
+  background-color: var(--surface-1);
+  background-size: 24px 100%, 24px 100%, 10px 100%, 10px 100%;
+  background-attachment: local, local, scroll, scroll;
+}

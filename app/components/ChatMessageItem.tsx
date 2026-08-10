@@ -50,12 +50,12 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
       </div>
 
       {!message.streaming && message.content.length > 0 && (
-        <div className="mt-1.5 flex items-center gap-3">
+        <div className="-mx-2.5 mt-1.5 flex items-center gap-1">
           <button
             type="button"
             onClick={handleCopy}
             aria-label="Copy response"
-            className="rounded-md p-1.5 text-text-primary/40 transition-colors hover:bg-surface-1 hover:text-text-primary/70 active:text-text-primary"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-primary/40 transition-colors hover:bg-surface-1 hover:text-text-primary/70 active:text-text-primary"
           >
             {copied ? (
               <Check className="h-4 w-4" strokeWidth={1.75} />

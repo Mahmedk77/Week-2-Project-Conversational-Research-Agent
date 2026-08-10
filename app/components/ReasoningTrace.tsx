@@ -74,7 +74,7 @@ export function ReasoningTrace({ steps }: { steps: ReasoningStep[] }) {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1 rounded-md py-1.5 px-1 text-[13px] text-text-primary/55 transition-colors hover:text-text-primary active:text-text-primary"
+        className="flex min-h-11 items-center gap-1 rounded-md px-1 text-[13px] text-text-primary/55 transition-colors hover:text-text-primary active:text-text-primary"
       >
         <ChevronDown
           className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}

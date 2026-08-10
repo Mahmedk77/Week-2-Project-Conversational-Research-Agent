@@ -64,7 +64,7 @@ const components: Components = {
   ),
   hr: () => <hr className="my-4 border-border" />,
   table: ({ children }) => (
-    <div className="no-scrollbar mb-4 max-w-full overflow-x-auto rounded-xl border border-border bg-surface-1 last:mb-0">
+    <div className="no-scrollbar scroll-fade-x mb-4 max-w-full overflow-x-auto rounded-xl border border-border last:mb-0">
       <table className="w-full border-collapse text-[0.92em]">{children}</table>
     </div>
   ),
