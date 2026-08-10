@@ -35,7 +35,7 @@ export function ChatInput({
             onClick={onClearMemory}
             aria-label="Clear memory"
             title="Clear memory"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-primary/40 transition-colors hover:bg-border/60 hover:text-text-primary/70 active:text-text-primary"
+            className="h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-primary/40 transition-colors hover:bg-border/60 hover:text-text-primary/70 active:text-text-primary hidden sm:flex"
           >
             <Trash2 className="h-4.5 w-4.5" strokeWidth={1.75} />
           </button>

@@ -4,24 +4,57 @@ import { useState } from "react";
 import { ChevronDown, Wrench, FileText } from "lucide-react";
 import type { ReasoningStep } from "./types";
 
+const MAX_SUMMARY_LENGTH = 180;
+
+function stripMarkdownArtifacts(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function truncateAtWordBoundary(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  const slice = text.slice(0, maxLength);
+  const lastSpace = slice.lastIndexOf(" ");
+  const clean = lastSpace > 0 ? slice.slice(0, lastSpace) : slice;
+  return `${clean.trim()}...`;
+}
+
+function cleanAndTruncate(text: string, maxLength: number): string {
+  return truncateAtWordBoundary(stripMarkdownArtifacts(text), maxLength);
+}
+
 function summarizeObservation(content: string): string {
   try {
     const parsed = JSON.parse(content);
     if (Array.isArray(parsed)) {
-      return parsed
+      const joined = parsed
         .map((item) => {
           if (item && typeof item === "object") {
             const label = item.topic ?? item.title ?? null;
             const detail = item.content ?? item.snippet ?? "";
-            return label ? `${label} — ${String(detail).slice(0, 80)}` : String(detail).slice(0, 100);
+            const cleanDetail = stripMarkdownArtifacts(String(detail));
+            return label ? `${stripMarkdownArtifacts(String(label))} — ${cleanDetail}` : cleanDetail;
           }
-          return String(item);
+          return stripMarkdownArtifacts(String(item));
         })
         .join("; ");
+      return truncateAtWordBoundary(joined, MAX_SUMMARY_LENGTH);
     }
-    return String(content).slice(0, 160);
+    return cleanAndTruncate(String(content), MAX_SUMMARY_LENGTH);
   } catch {
-    return content.length > 160 ? `${content.slice(0, 160)}…` : content;
+    return cleanAndTruncate(content, MAX_SUMMARY_LENGTH);
   }
 }
 
@@ -79,7 +112,9 @@ export function ReasoningTrace({ steps }: { steps: ReasoningStep[] }) {
                   />
                   <div>
                     <span className="font-medium text-text-primary/85">Result:</span>{" "}
-                    {summarizeObservation(step.content)}
+                    <span className="font-mono text-[12px] text-text-primary/60">
+                      {summarizeObservation(step.content)}
+                    </span>
                   </div>
                 </>
               )}
