@@ -43,6 +43,24 @@ Write an updated summary incorporating the new exchange.`],
     return await chain.invoke({ aiMsg, userMsg, priorSummary });
 };
 
+const calculatorTool = tool(
+  async ({ expression }) => {
+    if (!/^[0-9+\-*/().\s]+$/.test(expression)) {
+      return "Error: invalid expression";
+    }
+    try {
+      return String(Function(`"use strict"; return (${expression});`)());
+    } catch {
+      return "Error: invalid expression";
+    }
+  },
+  {
+    name: "calculator",
+    description: "Evaluates a math expression. Example: {\"expression\": \"34 * 0.15\"}",
+    schema: z.object({ expression: z.string() }),
+  }
+);
+
 const kb_searchTool = tool(
     async ({ query }) => {
         const { data, error } = await supabase
@@ -88,14 +106,14 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "message and sessionId are required" }, { status: 400 });
     }
 
-    const tools = [kb_searchTool, tavily_searchTool];
+    const tools = [kb_searchTool, tavily_searchTool, calculatorTool];
     const currentSummary = await load_memory(sessionId);
 
     const agent = createAgent({
         model: groqModel,
         tools,
         systemPrompt:
-        "You are a research assistant with two tools: knowledge_base_search (an internal knowledge base covering LangChain, Supabase, n8n, and CRM topics, always check this FIRST for anything that sounds like it could be in scope) and web_search (for current events, real-time facts, or anything not in the knowledge base). Answer concisely based on what the tools return. When presenting information in a markdown table, keep each cell to one short sentence or a few words — tables are viewed on mobile screens, so verbose cells break the layout. Put longer explanations in prose before or after the table, not inside cells."    });
+        "You are a research assistant with three tools: (1) knowledge_base_search — an internal knowledge base covering LangChain, Supabase, n8n, and CRM topics, always check this first for anything that could be in scope; (2) web_search — for current events, real-time facts, or anything not covered by the knowledge base; (3) calculator — for any arithmetic or numeric computation, always use this instead of computing math yourself. Answer concisely based on what the tools return. When presenting information in a markdown table, keep each cell to one short sentence or a few words — tables are viewed on mobile screens, so verbose cells break the layout. Put longer explanations in prose before or after the table, not inside cells."    });
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
