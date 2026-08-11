@@ -1,4 +1,4 @@
-import { groqModel, supabase, tavilyClient } from "@/lib/models";
+import { groqModel, groqSummaryModel, supabase, tavilyClient } from "@/lib/models";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { tool } from "@langchain/core/tools";
@@ -27,20 +27,75 @@ const save_memory = async (sessionId: string, summary: string) => {
         .upsert({ session_id: sessionId, summary, updated_at: new Date().toISOString() });
 };
 
+const MAX_SUMMARY_CHARS = 800;
+
+const RETRY_AFTER_PATTERN = /try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?|milliseconds?)/i;
+
+function getRetryAfterMs(err: unknown): number | undefined {
+    if (typeof err !== "object" || err === null) return undefined;
+
+    const retryAfterMs = (err as { retryAfterMs?: unknown }).retryAfterMs;
+    if (typeof retryAfterMs === "number") return retryAfterMs;
+
+    const message = (err as { message?: unknown }).message;
+    if (typeof message !== "string") return undefined;
+
+    const match = RETRY_AFTER_PATTERN.exec(message);
+    if (!match) return undefined;
+
+    const value = Number(match[1]);
+    if (Number.isNaN(value)) return undefined;
+
+    const unit = match[2].toLowerCase();
+    return unit === "ms" || unit.startsWith("millisecond") ? value : value * 1000;
+}
+
+function isRateLimitError(err: unknown): boolean {
+    if (typeof err !== "object" || err === null) return false;
+    const name = (err as { name?: unknown }).name;
+    const rateLimitType = (err as { rateLimitType?: unknown }).rateLimitType;
+    const status = (err as { status?: unknown }).status;
+    return (
+        name === "RateLimitQuotaExhaustedError" ||
+        name === "RateLimitCapacityError" ||
+        rateLimitType !== undefined ||
+        status === 429
+    );
+}
+
+function formatRateLimitMessage(retryAfterMs: number | undefined): string {
+    if (retryAfterMs === undefined) {
+        return "The model is currently rate-limited. Please try again in a moment.";
+    }
+    const seconds = Math.ceil(retryAfterMs / 1000);
+    const unit = seconds === 1 ? "second" : "seconds";
+    return `The model is currently rate-limited. Please try again in about ${seconds} ${unit}.`;
+}
+
 const exchangeSummary = async (aiMsg: string, userMsg: string, priorSummary: string) => {
     const prompt = ChatPromptTemplate.fromMessages([
-        ["system", "You summarize conversations concisely, updating a running summary with new exchanges."],
-        ["user", `Existing summary: {priorSummary}
+        [
+            "system",
+            `You maintain a running summary of a conversation as plain facts, written in third person (e.g. "User asked about X; assistant explained Y").
 
-New exchange:
-User: {userMsg}
-Assistant: {aiMsg}
+Output ONLY the updated summary text itself — no labels, no headers, no phrases like "Existing summary:", "New exchange:", or "Updated summary:", no preamble, no explanation of what you did. Just the summary content, nothing else.
 
-Write an updated summary incorporating the new exchange.`],
+Keep the ENTIRE summary under ${MAX_SUMMARY_CHARS} characters. Prioritize the most recent and most relevant facts; compress or drop older details to stay within that limit. Be terse — no padding, no restating.`,
+        ],
+        ["user", `Prior summary (may be empty if this is the first exchange):
+{priorSummary}
+
+Latest exchange to fold in:
+User asked: {userMsg}
+Assistant answered: {aiMsg}
+
+Reply with only the updated summary text, under ${MAX_SUMMARY_CHARS} characters.`],
     ]);
 
-    const chain = prompt.pipe(groqModel).pipe(new StringOutputParser());
-    return await chain.invoke({ aiMsg, userMsg, priorSummary });
+    const chain = prompt.pipe(groqSummaryModel).pipe(new StringOutputParser());
+    const summary = await chain.invoke({ aiMsg, userMsg, priorSummary });
+    const trimmed = summary.trim();
+    return trimmed.length > MAX_SUMMARY_CHARS ? trimmed.slice(0, MAX_SUMMARY_CHARS) : trimmed;
 };
 
 const calculatorTool = tool(
@@ -121,16 +176,14 @@ export async function POST(request: Request) {
         async start(controller) {
             try {
                 let fullAnswer = "";
+                const userContent = currentSummary
+                    ? `[Context from earlier in this conversation: ${currentSummary}]\n\n${message}`
+                    : message;
                 const eventStream = await agent.stream(
                     {
-                        messages: [
-                            ...(currentSummary
-                                ? [{ role: "system" as const, content: `Earlier conversation summary: ${currentSummary}` }]
-                                : []),
-                            { role: "user" as const, content: message },
-                        ],
+                        messages: [{ role: "user" as const, content: userContent }],
                     },
-                    { recursionLimit: 10, streamMode: "messages" }
+                    { recursionLimit: 15, streamMode: "messages" }
                 );
                 const reasoningTrace: any[] = [];
 
@@ -150,11 +203,26 @@ export async function POST(request: Request) {
                 controller.enqueue(encoder.encode("\n__REASONING_TRACE__\n"));
                 controller.enqueue(encoder.encode(JSON.stringify(reasoningTrace)));
 
-                const updatedSummary = await exchangeSummary(fullAnswer, message, currentSummary);
-                await save_memory(sessionId, updatedSummary);
+                try {
+                    const updatedSummary = await exchangeSummary(fullAnswer, message, currentSummary);
+                    await save_memory(sessionId, updatedSummary);
+                } catch (memoryErr) {
+                    console.error("Memory summary/save error (non-fatal):", memoryErr);
+                }
+
                 controller.close();
             } catch (err) {
                 console.error("Streaming error:", err);
+
+                if (isRateLimitError(err)) {
+                    const retryAfterMs = getRetryAfterMs(err);
+                    controller.enqueue(encoder.encode(formatRateLimitMessage(retryAfterMs)));
+                    controller.enqueue(encoder.encode("\n__REASONING_TRACE__\n"));
+                    controller.enqueue(encoder.encode("[]"));
+                    controller.close();
+                    return;
+                }
+
                 controller.error(err);
             }
         },

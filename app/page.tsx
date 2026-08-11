@@ -8,6 +8,35 @@ import type { ChatMessage, ReasoningStep } from "./components/types";
 
 const DELIMITER = "\n__REASONING_TRACE__\n";
 
+const ERROR_MESSAGES = {
+  badRequest: "That request couldn't be processed. Please rephrase and try again.",
+  serverError: "The server ran into a problem. Please try again in a moment.",
+  network: "Couldn't reach the server. Check your connection and try again.",
+  interrupted: "The response was interrupted. Please try again.",
+  unknown: "Something went wrong processing that request. Please try again.",
+} as const;
+
+class ChatRequestError extends Error {
+  category: keyof typeof ERROR_MESSAGES;
+
+  constructor(category: keyof typeof ERROR_MESSAGES, message: string) {
+    super(message);
+    this.category = category;
+  }
+}
+
+function categorizeError(
+  err: unknown,
+  hadPartialContent: boolean,
+  streamStarted: boolean
+): keyof typeof ERROR_MESSAGES {
+  if (err instanceof ChatRequestError) return err.category;
+  if (hadPartialContent) return "interrupted";
+  if (streamStarted) return "serverError";
+  if (err instanceof TypeError) return "network";
+  return "unknown";
+}
+
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -41,6 +70,9 @@ export default function Home() {
     setInput("");
     setIsStreaming(true);
 
+    let visibleAnswer = "";
+    let streamStarted = false;
+
     try {
       const res = await fetch("/api/agent", {
         method: "POST",
@@ -48,12 +80,21 @@ export default function Home() {
         body: JSON.stringify({ message: trimmed, sessionId }),
       });
 
-      if (!res.body) throw new Error("No response body");
+      if (!res.ok || !res.body) {
+        if (res.status === 400) {
+          throw new ChatRequestError("badRequest", `Request failed with status ${res.status}`);
+        }
+        if (res.status >= 500) {
+          throw new ChatRequestError("serverError", `Request failed with status ${res.status}`);
+        }
+        throw new ChatRequestError("unknown", `Request failed with status ${res.status}`);
+      }
+
+      streamStarted = true;
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let visibleAnswer = "";
       let traceJson = "";
       let delimiterFound = false;
 
@@ -109,11 +150,12 @@ export default function Home() {
       );
     } catch (err) {
       console.error("Chat stream error:", err);
+      const category = categorizeError(err, Boolean(visibleAnswer), streamStarted);
+      const errorMessage = ERROR_MESSAGES[category];
+      const fallbackContent = visibleAnswer ? `${visibleAnswer}\n\n${errorMessage}` : errorMessage;
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === assistantId
-            ? { ...m, content: "Something went wrong. Please try again.", streaming: false }
-            : m
+          m.id === assistantId ? { ...m, content: fallbackContent, streaming: false } : m
         )
       );
     } finally {

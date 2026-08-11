@@ -10,6 +10,14 @@ export const groqModel = new ChatOpenAI({
   },
 });
 
+export const groqSummaryModel = new ChatOpenAI({
+  model: "llama-3.1-8b-instant",
+  apiKey: process.env.GROQ_API_KEY,
+  configuration: {
+    baseURL: "https://api.groq.com/openai/v1",
+  },
+});
+
 export const openRouterModel = new ChatOpenAI({
   model: "meta-llama/llama-3-8b-instruct",
   apiKey: process.env.OPENROUTER_API_KEY,
