@@ -53,11 +53,10 @@ export default function Home() {
     scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, options?: { skipUserMessage?: boolean }) => {
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
 
-    const userMessage: ChatMessage = { id: createId(), role: "user", content: trimmed };
     const assistantId = createId();
     const assistantMessage: ChatMessage = {
       id: assistantId,
@@ -66,7 +65,12 @@ export default function Home() {
       streaming: true,
     };
 
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    if (options?.skipUserMessage) {
+      setMessages((prev) => [...prev, assistantMessage]);
+    } else {
+      const userMessage: ChatMessage = { id: createId(), role: "user", content: trimmed };
+      setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    }
     setInput("");
     setIsStreaming(true);
 
@@ -154,13 +158,23 @@ export default function Home() {
       const errorMessage = ERROR_MESSAGES[category];
       const fallbackContent = visibleAnswer ? `${visibleAnswer}\n\n${errorMessage}` : errorMessage;
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, content: fallbackContent, streaming: false } : m
-        )
+        prev.map((m) => (m.id === assistantId ? { ...m, content: fallbackContent, streaming: false } : m))
       );
     } finally {
       setIsStreaming(false);
     }
+  };
+
+  const retryMessage = (assistantMessageId: string) => {
+    if (isStreaming) return;
+
+    const index = messages.findIndex((m) => m.id === assistantMessageId);
+    if (index <= 0) return;
+    const precedingUserMessage = messages[index - 1];
+    if (precedingUserMessage.role !== "user") return;
+
+    setMessages((prev) => prev.filter((m) => m.id !== assistantMessageId));
+    sendMessage(precedingUserMessage.content, { skipUserMessage: true });
   };
 
   const handleClearMemory = async () => {
@@ -202,7 +216,7 @@ export default function Home() {
         {hasMessages ? (
           <div className="flex-1 pb-4 pt-2">
             {messages.map((message) => (
-              <ChatMessageItem key={message.id} message={message} />
+              <ChatMessageItem key={message.id} message={message} onRetry={retryMessage} />
             ))}
             <div ref={scrollRef} />
           </div>

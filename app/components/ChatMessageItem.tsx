@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, RotateCw } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
 import { ReasoningTrace } from "./ReasoningTrace";
 import type { ChatMessage } from "./types";
@@ -16,7 +16,13 @@ function TypingDots() {
   );
 }
 
-export function ChatMessageItem({ message }: { message: ChatMessage }) {
+export function ChatMessageItem({
+  message,
+  onRetry,
+}: {
+  message: ChatMessage;
+  onRetry?: (messageId: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -63,6 +69,17 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
               <Copy className="h-4 w-4" strokeWidth={1.75} />
             )}
           </button>
+
+          {onRetry && (
+            <button
+              type="button"
+              onClick={() => onRetry(message.id)}
+              aria-label="Retry"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-primary/40 transition-colors hover:bg-surface-1 hover:text-text-primary/70 active:text-text-primary"
+            >
+              <RotateCw className="h-4 w-4" strokeWidth={1.75} />
+            </button>
+          )}
         </div>
       )}
 
