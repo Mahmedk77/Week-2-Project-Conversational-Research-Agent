@@ -170,9 +170,6 @@ const tavily_searchTool = tool(
     }
 );
 
-const FACTUAL_RISK_PATTERN =
-    /\b(plan|itinerary|trip|travel|visit|vacation|recommend|suggest|best time|opening hours?|price|cost|schedule|visa|weather|population|latest|current|recent|news|today|this week|this month|calculate|compute|how much is|what is \d|convert)\b/i;
-
 export async function POST(request: Request) {
     const { message, sessionId } = await request.json();
 
@@ -183,13 +180,8 @@ export async function POST(request: Request) {
     const tools = [kb_searchTool, tavily_searchTool, calculatorTool];
     const currentSummary = await load_memory(sessionId);
 
-    const shouldForceTool = FACTUAL_RISK_PATTERN.test(message);
-    const modelForThisRequest = shouldForceTool
-        ? groqModel.bindTools(tools, { tool_choice: "required" })
-        : groqModel;
-
     const agent = createAgent({
-        model: modelForThisRequest,
+        model: groqModel,
         tools,
         systemPrompt:
         `You are a research assistant with three tools: knowledge_base_search, web_search, and calculator.
