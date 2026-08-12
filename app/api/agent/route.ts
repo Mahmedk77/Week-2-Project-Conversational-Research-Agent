@@ -137,9 +137,12 @@ const kb_searchTool = tool(
 );
 
 const tavily_searchTool = tool(
-    async ({ query }) => {
+    async ({ query, maxResults, recencyDays }) => {
         try {
-            const tavily_res = await tavilyClient.search(query, { maxResults: 3 });
+            const tavily_res = await tavilyClient.search(query, {
+                maxResults: maxResults ?? 3,
+                ...(recencyDays !== undefined ? { days: recencyDays } : {}),
+            });
             return JSON.stringify(
                 tavily_res.results.map((r) => ({ title: r.title, url: r.url, snippet: r.content }))
             );
@@ -149,8 +152,12 @@ const tavily_searchTool = tool(
     },
     {
         name: "web_search",
-        description: "Search the web for current information. Use for real-time facts, recent events, or anything you don't already know. Example: {\"query\": \"latest LangChain version\"}",
-        schema: z.object({ query: z.string() }),
+        description: "Search the web for current information. Use for real-time facts, recent events, or anything you don't already know. Example: {\"query\": \"latest LangChain version\"}. Optionally set maxResults (default 3) to control how many results come back, and recencyDays to restrict results to the last N days (e.g. 7 for \"this week\").",
+        schema: z.object({
+            query: z.string(),
+            maxResults: z.number().int().min(1).max(10).optional().describe("Number of results to return, default 3"),
+            recencyDays: z.number().int().min(1).optional().describe("Only include results from the last N days"),
+        }),
     }
 );
 
