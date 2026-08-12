@@ -31,8 +31,16 @@ export const tavilyClient  = tavily({
   apiKey: process.env.TAVILY_API_KEY 
 });
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 export const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
+  requireEnv("SUPABASE_URL"),
+  requireEnv("SUPABASE_ANON_KEY")
 )
 

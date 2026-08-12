@@ -5,6 +5,11 @@ import { tool } from "@langchain/core/tools";
 import { AIMessageChunk, createAgent, ToolMessage } from "langchain";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { ReasoningStep } from "@/app/components/types";
+
+// Re-sent as input on every step of the agent loop, so its real cost is
+// roughly 3x this on a two-tool turn.
+const MAX_SUMMARY_CHARS = 400;
 
 const load_memory = async (sessionId: string): Promise<string> => {
     const { data, error } = await supabase
@@ -18,7 +23,11 @@ const load_memory = async (sessionId: string): Promise<string> => {
         return "";
     }
 
-    return data?.summary ?? "";
+    // Enforce the cap on read as well as on write: a row written by an older
+    // build (or any other client) must not be able to inflate the prompt.
+    const summary = data?.summary;
+    if (typeof summary !== "string") return "";
+    return summary.length > MAX_SUMMARY_CHARS ? summary.slice(0, MAX_SUMMARY_CHARS) : summary;
 };
 
 const save_memory = async (sessionId: string, summary: string) => {
@@ -26,8 +35,6 @@ const save_memory = async (sessionId: string, summary: string) => {
         .from("agent_memory")
         .upsert({ session_id: sessionId, summary, updated_at: new Date().toISOString() });
 };
-
-const MAX_SUMMARY_CHARS = 800;
 
 const RETRY_AFTER_PATTERN = /try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?|milliseconds?)/i;
 
@@ -98,37 +105,140 @@ Reply with only the updated summary text, under ${MAX_SUMMARY_CHARS} characters.
     return trimmed.length > MAX_SUMMARY_CHARS ? trimmed.slice(0, MAX_SUMMARY_CHARS) : trimmed;
 };
 
-const MAX_TOOL_SNIPPET_CHARS = 200;
+const MAX_TOOL_SNIPPET_CHARS = 150;
 
 function truncateSnippet(text: string): string {
     if (text.length <= MAX_TOOL_SNIPPET_CHARS) return text;
     return `${text.slice(0, MAX_TOOL_SNIPPET_CHARS).trim()}...`;
 }
 
+const MAX_EXPRESSION_CHARS = 200;
+
+/**
+ * Recursive-descent evaluator for + - * / and parentheses.
+ *
+ * Deliberately does NOT use Function()/eval: `expression` is model-generated
+ * from user text, so it is untrusted input. A charset regex in front of
+ * Function() is one missed character away from arbitrary code execution, and
+ * still allows things like `**` blowups. This parser can only ever produce a
+ * number.
+ */
+function evaluateExpression(input: string): number {
+    let pos = 0;
+
+    const skipSpaces = () => {
+        while (pos < input.length && /\s/.test(input[pos])) pos++;
+    };
+
+    const parseNumber = (): number => {
+        skipSpaces();
+        const start = pos;
+        while (pos < input.length && /[0-9]/.test(input[pos])) pos++;
+        if (input[pos] === ".") {
+            pos++;
+            while (pos < input.length && /[0-9]/.test(input[pos])) pos++;
+        }
+        if (pos === start) throw new Error("expected a number");
+        return Number(input.slice(start, pos));
+    };
+
+    const parseFactor = (): number => {
+        skipSpaces();
+        if (input[pos] === "+") {
+            pos++;
+            return parseFactor();
+        }
+        if (input[pos] === "-") {
+            pos++;
+            return -parseFactor();
+        }
+        if (input[pos] === "(") {
+            pos++;
+            const value = parseSum();
+            skipSpaces();
+            if (input[pos] !== ")") throw new Error("unbalanced parentheses");
+            pos++;
+            return value;
+        }
+        return parseNumber();
+    };
+
+    const parseProduct = (): number => {
+        let value = parseFactor();
+        for (;;) {
+            skipSpaces();
+            const op = input[pos];
+            if (op !== "*" && op !== "/") return value;
+            pos++;
+            const rhs = parseFactor();
+            if (op === "/" && rhs === 0) throw new Error("division by zero");
+            value = op === "*" ? value * rhs : value / rhs;
+        }
+    };
+
+    const parseSum = (): number => {
+        let value = parseProduct();
+        for (;;) {
+            skipSpaces();
+            const op = input[pos];
+            if (op !== "+" && op !== "-") return value;
+            pos++;
+            const rhs = parseProduct();
+            value = op === "+" ? value + rhs : value - rhs;
+        }
+    };
+
+    const result = parseSum();
+    skipSpaces();
+    if (pos !== input.length) throw new Error("unexpected trailing input");
+    if (!Number.isFinite(result)) throw new Error("result is not a finite number");
+    return result;
+}
+
 const calculatorTool = tool(
   async ({ expression }) => {
-    if (!/^[0-9+\-*/().\s]+$/.test(expression)) {
-      return "Error: invalid expression";
+    if (expression.length > MAX_EXPRESSION_CHARS) {
+      return "Error: expression too long";
     }
     try {
-      return String(Function(`"use strict"; return (${expression});`)());
-    } catch {
-      return "Error: invalid expression";
+      return String(evaluateExpression(expression));
+    } catch (err) {
+      return `Error: invalid expression (${(err as Error).message})`;
     }
   },
   {
     name: "calculator",
-    description: "Evaluates a math expression. Example: {\"expression\": \"34 * 0.15\"}",
+    description: "Evaluates a math expression using + - * / and parentheses. Example: {\"expression\": \"34 * 0.15\"}",
     schema: z.object({ expression: z.string() }),
   }
 );
 
+const MAX_KB_QUERY_CHARS = 100;
+
+/**
+ * PostgREST's `.or()` takes a filter expression as a raw string, so any comma,
+ * parenthesis, backslash or quote in an interpolated value can restructure the
+ * filter tree (e.g. `a),id.gte.0,and(id.gte.0` widens the match to every row).
+ * `query` comes from the model, which relays user text, so it is untrusted:
+ * escape the PostgREST metacharacters and neutralise LIKE wildcards.
+ */
+function escapeOrFilterValue(value: string): string {
+    return value
+        .replace(/[\\%_]/g, "\\$&")
+        .replace(/[(),."']/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 const kb_searchTool = tool(
     async ({ query }) => {
+        const safeQuery = escapeOrFilterValue(query).slice(0, MAX_KB_QUERY_CHARS);
+        if (!safeQuery) return "Cannot match the query in the database";
+
         const { data, error } = await supabase
             .from("knowledge_base")
             .select("topic, content")
-            .or(`topic.ilike.%${query}%,content.ilike.%${query}%`)
+            .or(`topic.ilike.%${safeQuery}%,content.ilike.%${safeQuery}%`)
             .limit(3);
 
         if (error) return `Failed to fetch from kb_database: ${error.message}`;
@@ -140,7 +250,7 @@ const kb_searchTool = tool(
     },
     {
         name: "knowledge_base_search",
-        description: "Search the internal knowledge base for facts about LangChain, Supabase, n8n, CRMs, and related tools. Example: {\"query\": \"pgvector\"}",
+        description: "Search the internal knowledge base for facts about LangChain, Supabase, n8n, and CRMs. Example: {\"query\": \"pgvector\"}",
         schema: z.object({ query: z.string() }),
     }
 );
@@ -161,20 +271,79 @@ const tavily_searchTool = tool(
     },
     {
         name: "web_search",
-        description: "Search the web for current information. Use for real-time facts, recent events, or anything you don't already know. Example: {\"query\": \"latest LangChain version\"}. Optionally set maxResults (default 3) to control how many results come back, and recencyDays to restrict results to the last N days (e.g. 7 for \"this week\").",
+        description: "Search the web for current or real-time information. Example: {\"query\": \"latest LangChain version\"}",
         schema: z.object({
             query: z.string(),
-            maxResults: z.number().int().min(1).max(10).optional().describe("Number of results to return, default 3"),
-            recencyDays: z.number().int().min(1).optional().describe("Only include results from the last N days"),
+            maxResults: z.number().int().min(1).max(10).optional().describe("How many results, default 3"),
+            recencyDays: z.number().int().min(1).optional().describe("Only results from the last N days"),
         }),
     }
 );
 
-export async function POST(request: Request) {
-    const { message, sessionId } = await request.json();
+/**
+ * Kept deliberately terse: LangGraph resends the full message history on every
+ * step of the agent loop, so this prompt is re-billed as input on each LLM call
+ * (~3x for a two-tool turn). Every token here costs roughly triple against the
+ * 8k TPM ceiling.
+ *
+ * Terse but COMPLETE — each line below is a distinct behavioural rule that was
+ * added in response to a real observed failure. Shorten wording freely; do not
+ * drop a rule.
+ */
+const SYSTEM_PROMPT = `You are a research assistant with three tools: knowledge_base_search, web_search, and calculator.
 
-    if (!message || !sessionId) {
+TOOL USE — default to calling a tool; answering from your own knowledge is the exception:
+- LangChain, Supabase, n8n, or CRM facts: MUST call knowledge_base_search first. The tool result is the source of truth, not your training data.
+- Current events, recent news, live data, or anything not timeless general knowledge: MUST call web_search.
+- Specific checkable real-world facts (places, hours, prices, schedules, travel/visa rules, anything that goes stale): MUST call web_search first, including when phrased as "plan"/"suggest"/"recommend" rather than a question. A travel itinerary requires web_search.
+- Any arithmetic, however simple: MUST call calculator. Never compute a number yourself.
+- If knowledge_base_search returns no match, call web_search before answering.
+- Skip tools ONLY for: greetings, clarifying questions, opinions asked for as opinions, or things already established earlier in this conversation.
+- When unsure, call a tool. A wasted call beats a wrong fact.
+
+ANSWERING:
+- Use only what the tools returned; add no facts they didn't provide.
+- Output is hard-capped at ~500 tokens and gets cut off mid-sentence. Answer the core question first, in full, before any extra detail.
+- Large/multi-part requests (multi-day itineraries, multi-topic plans, long comparisons, "everything about X"): give a compact overview — one line per day/location, or a tight table — not a paragraph each. Expand only the 3-5 most important points, then offer to go deeper on one part instead of pre-writing it all. Short single-fact answers stay direct.
+
+FORMATTING:
+- Table cells: one short sentence or a few words (mobile screens); put longer explanation in prose outside the table.
+- Write calculations in plain text ('2400 × 0.15 = 360'), never LaTeX (no \\times, \\boxed).`;
+
+/**
+ * A single user message is unbounded input that goes straight into the model's
+ * context, so it is both an abuse vector and the largest single contributor to
+ * per-request input tokens (the 8k TPM ceiling). Cap it at the source.
+ */
+const MAX_MESSAGE_CHARS = 4000;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+export async function POST(request: Request) {
+    let body: unknown;
+    try {
+        body = await request.json();
+    } catch {
+        return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const { message, sessionId } = (body ?? {}) as { message?: unknown; sessionId?: unknown };
+
+    if (typeof message !== "string" || typeof sessionId !== "string") {
         return NextResponse.json({ error: "message and sessionId are required" }, { status: 400 });
+    }
+
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) {
+        return NextResponse.json({ error: "message and sessionId are required" }, { status: 400 });
+    }
+    if (trimmedMessage.length > MAX_MESSAGE_CHARS) {
+        return NextResponse.json(
+            { error: `message must be ${MAX_MESSAGE_CHARS} characters or fewer` },
+            { status: 400 }
+        );
+    }
+    if (!SESSION_ID_PATTERN.test(sessionId)) {
+        return NextResponse.json({ error: "sessionId is malformed" }, { status: 400 });
     }
 
     const tools = [kb_searchTool, tavily_searchTool, calculatorTool];
@@ -183,29 +352,7 @@ export async function POST(request: Request) {
     const agent = createAgent({
         model: groqModel,
         tools,
-        systemPrompt:
-        `You are a research assistant with three tools: knowledge_base_search, web_search, and calculator.
-
-DEFAULT TO USING A TOOL. Treat "answer from my own knowledge" as the exception, not the default — this is a hard rule:
-- Any factual claim about LangChain, Supabase, n8n, or CRMs — you MUST call knowledge_base_search first. Never answer these from memory, even if you're confident you know the answer. Your training data can be outdated or wrong; the tool result is the source of truth.
-- Any question about current events, recent news, live/real-time data, or anything you are not 100% certain is timeless general knowledge — you MUST call web_search. If in doubt, search; do not guess.
-- Any request that involves specific, checkable, real-world facts — place names, opening hours, prices, schedules, travel/visa requirements, recommendations that could go stale, or anything a user could fact-check and find you wrong — you MUST call web_search for at least the key facts before answering, even if the request is phrased as "plan," "suggest," "recommend," or "help me with," not as a direct question. Example: a travel itinerary request requires web_search for real, current information about the destinations, not a synthesized answer from memory.
-- Any arithmetic or numeric computation, no matter how simple — you MUST call calculator. Never compute or state a numeric result yourself.
-- Skip tools ONLY for messages with nothing factual to verify: greetings, clarifying questions back to the user, opinions explicitly requested as opinions, or discussing something already established earlier in this same conversation.
-- If a knowledge_base_search returns no match, then call web_search before answering — do not fall back to your own knowledge just because the internal search came up empty.
-- When unsure whether a request needs a tool, call one. A wasted tool call costs less than a wrong or outdated answer stated as fact.
-
-After using tools, answer concisely based on what they returned — do not add facts the tools didn't provide.
-
-Your response is hard-capped at ~500 tokens (roughly 350-400 words) — anything beyond that gets cut off mid-sentence. Always answer the core question first, in full, before adding any extra detail, so a cutoff never loses the actual answer.
-
-LENGTH DISCIPLINE for large or multi-part requests (multi-day itineraries, plans spanning several locations/topics, long comparisons, "give me everything about X"): you are running on a tight token budget, so do not write an exhaustive day-by-day or item-by-item breakdown in one response. Instead:
-- Give a compact overview: for a multi-day/multi-location request, one short paragraph or a tight table summarizing the whole thing (e.g. one line per day or per location, not a paragraph each).
-- Pick only the 3-5 most important or most-requested facts to expand on in prose.
-- End with a brief offer to go deeper on any specific part the user wants (e.g. "Want the day-by-day breakdown for Cappadocia specifically?") rather than pre-emptively writing it all out.
-- This does not apply to short, single-fact answers — those should stay exactly as direct as they already are.
-
-Formatting rules: when presenting information in a markdown table, keep each cell to one short sentence or a few words, since tables are viewed on mobile screens and verbose cells break the layout — put longer explanations in prose before or after the table, not inside cells. When showing a calculation or its result, write it in plain text (e.g. '2400 × 0.15 = 360'), never in LaTeX notation (no \\times, \\boxed, or similar syntax).`
+        systemPrompt: SYSTEM_PROMPT
     });
 
     const encoder = new TextEncoder();
@@ -214,22 +361,32 @@ Formatting rules: when presenting information in a markdown table, keep each cel
             try {
                 let fullAnswer = "";
                 const userContent = currentSummary
-                    ? `[Context from earlier in this conversation: ${currentSummary}]\n\n${message}`
-                    : message;
+                    ? `[Context from earlier in this conversation: ${currentSummary}]\n\n${trimmedMessage}`
+                    : trimmedMessage;
                 const eventStream = await agent.stream(
                     {
                         messages: [{ role: "user" as const, content: userContent }],
                     },
                     { recursionLimit: 15, streamMode: "messages" }
                 );
-                const reasoningTrace: any[] = [];
+                const reasoningTrace: ReasoningStep[] = [];
 
                 for await (const [chunk] of eventStream) {
                     if (chunk instanceof AIMessageChunk && chunk.tool_calls?.length) {
-                        reasoningTrace.push({ type: "action", tool_calls: chunk.tool_calls });
+                        reasoningTrace.push({
+                            type: "action",
+                            tool_calls: chunk.tool_calls.map((call) => ({
+                                name: call.name,
+                                args: call.args,
+                            })),
+                        });
                     }
                     if (chunk instanceof ToolMessage) {
-                        reasoningTrace.push({ type: "observation", tool: chunk.name, content: chunk.content });
+                        reasoningTrace.push({
+                            type: "observation",
+                            tool: chunk.name ?? "unknown",
+                            content: String(chunk.content),
+                        });
                     }
                     if (chunk instanceof AIMessageChunk && chunk.content) {
                         fullAnswer += chunk.content;
@@ -241,7 +398,7 @@ Formatting rules: when presenting information in a markdown table, keep each cel
                 controller.enqueue(encoder.encode(JSON.stringify(reasoningTrace)));
 
                 try {
-                    const updatedSummary = await exchangeSummary(fullAnswer, message, currentSummary);
+                    const updatedSummary = await exchangeSummary(fullAnswer, trimmedMessage, currentSummary);
                     await save_memory(sessionId, updatedSummary);
                 } catch (memoryErr) {
                     console.error("Memory summary/save error (non-fatal):", memoryErr);
