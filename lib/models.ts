@@ -2,14 +2,60 @@ import { ChatOpenAI } from "@langchain/openai";
 import { createClient } from "@supabase/supabase-js";
 import { tavily } from "@tavily/core";
 
-export const groqModel = new ChatOpenAI({
-  model: "openai/gpt-oss-20b",
-  apiKey: process.env.GROQ_API_KEY,
-  maxTokens: 500,
-  configuration: {
-    baseURL: "https://api.groq.com/openai/v1",
-  },
-});
+/**
+ * maxTokens caps the whole generation, INCLUDING the tokens a tool call's
+ * JSON arguments are streamed in. At 500 a verbose model could hit the ceiling
+ * mid-arguments, leaving LangChain to reassemble a truncated fragment and
+ * throw "Failed to parse tool call arguments as JSON". 800 leaves headroom;
+ * it is a ceiling, not a target, so normal answers cost no more than before.
+ */
+const MAX_OUTPUT_TOKENS = 800;
+
+function groqChatModel(model: string) {
+  return new ChatOpenAI({
+    model,
+    apiKey: process.env.GROQ_API_KEY,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    configuration: {
+      baseURL: "https://api.groq.com/openai/v1",
+    },
+  });
+}
+
+/**
+ * Agent models in fallback order. Each Groq model has its OWN independent
+ * rate-limit bucket, so when one is exhausted we retry the same request on the
+ * next instead of making the user wait — which matters most for the daily
+ * (TPD) cap, since that does not roll over for hours.
+ *
+ * Order is based on DIRECT PROBING of both halves of the agent loop — a model
+ * must (a) emit valid tool-call JSON and (b) produce visible content after a
+ * tool result. Measured, 5 attempts each:
+ *
+ *   gpt-oss-safeguard-20b  tools 5/5   post-tool 2511 chars   <- both pass
+ *   gpt-oss-20b            tools 5/5   post-tool 2069 chars   <- both pass
+ *   gpt-oss-120b           tools 5/5   post-tool 0 CHARS      <- BROKEN
+ *   llama-3.3-70b          tools 1/5   (mangles tool name)    <- BROKEN
+ *   llama-3.1-8b           tools 4/5   post-tool ok           <- flaky
+ *   qwen3.6-27b            leaks raw <think> into content, always finish=length
+ *
+ * `gpt-oss-120b` calls tools correctly but returns ZERO content on the step
+ * after a tool result, producing an empty answer. Do not promote it above the
+ * working models; it is kept last only as a better-than-nothing option.
+ *
+ * Do NOT add `groq/compound` or `groq/compound-mini`: agentic "Systems" with
+ * built-in tools, incompatible with bindTools() (confirmed 400 error).
+ */
+export const AGENT_MODEL_CHAIN = [
+  "openai/gpt-oss-safeguard-20b",
+  "openai/gpt-oss-20b",
+  "openai/gpt-oss-120b",
+] as const;
+
+export const agentModels = AGENT_MODEL_CHAIN.map((model) => ({
+  model,
+  instance: groqChatModel(model),
+}));
 
 export const groqSummaryModel = new ChatOpenAI({
   model: "llama-3.1-8b-instant",
