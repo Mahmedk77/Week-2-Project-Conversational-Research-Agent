@@ -5,6 +5,7 @@ import { tavily } from "@tavily/core";
 export const groqModel = new ChatOpenAI({
   model: "openai/gpt-oss-20b",
   apiKey: process.env.GROQ_API_KEY,
+  maxTokens: 500,
   configuration: {
     baseURL: "https://api.groq.com/openai/v1",
   },
@@ -19,7 +20,7 @@ export const groqSummaryModel = new ChatOpenAI({
 });
 
 export const openRouterModel = new ChatOpenAI({
-  model: "meta-llama/llama-3-8b-instruct",
+  model: "inclusionai/ling-3.0-tiny:free",
   apiKey: process.env.OPENROUTER_API_KEY,
   configuration: {
     baseURL: "https://openrouter.ai/api/v1",

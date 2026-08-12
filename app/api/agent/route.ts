@@ -98,6 +98,13 @@ Reply with only the updated summary text, under ${MAX_SUMMARY_CHARS} characters.
     return trimmed.length > MAX_SUMMARY_CHARS ? trimmed.slice(0, MAX_SUMMARY_CHARS) : trimmed;
 };
 
+const MAX_TOOL_SNIPPET_CHARS = 200;
+
+function truncateSnippet(text: string): string {
+    if (text.length <= MAX_TOOL_SNIPPET_CHARS) return text;
+    return `${text.slice(0, MAX_TOOL_SNIPPET_CHARS).trim()}...`;
+}
+
 const calculatorTool = tool(
   async ({ expression }) => {
     if (!/^[0-9+\-*/().\s]+$/.test(expression)) {
@@ -127,7 +134,9 @@ const kb_searchTool = tool(
         if (error) return `Failed to fetch from kb_database: ${error.message}`;
         if (!data || data.length === 0) return "Cannot match the query in the database";
 
-        return JSON.stringify(data);
+        return JSON.stringify(
+            data.map((row) => ({ topic: row.topic, content: truncateSnippet(row.content) }))
+        );
     },
     {
         name: "knowledge_base_search",
@@ -144,7 +153,7 @@ const tavily_searchTool = tool(
                 ...(recencyDays !== undefined ? { days: recencyDays } : {}),
             });
             return JSON.stringify(
-                tavily_res.results.map((r) => ({ title: r.title, url: r.url, snippet: r.content }))
+                tavily_res.results.map((r) => ({ title: r.title, url: r.url, snippet: truncateSnippet(r.content) }))
             );
         } catch (error) {
             return `Error fetching results from web: ${(error as Error).message}`;
@@ -161,6 +170,9 @@ const tavily_searchTool = tool(
     }
 );
 
+const FACTUAL_RISK_PATTERN =
+    /\b(plan|itinerary|trip|travel|visit|vacation|recommend|suggest|best time|opening hours?|price|cost|schedule|visa|weather|population|latest|current|recent|news|today|this week|this month|calculate|compute|how much is|what is \d|convert)\b/i;
+
 export async function POST(request: Request) {
     const { message, sessionId } = await request.json();
 
@@ -171,8 +183,13 @@ export async function POST(request: Request) {
     const tools = [kb_searchTool, tavily_searchTool, calculatorTool];
     const currentSummary = await load_memory(sessionId);
 
+    const shouldForceTool = FACTUAL_RISK_PATTERN.test(message);
+    const modelForThisRequest = shouldForceTool
+        ? groqModel.bindTools(tools, { tool_choice: "required" })
+        : groqModel;
+
     const agent = createAgent({
-        model: groqModel,
+        model: modelForThisRequest,
         tools,
         systemPrompt:
         `You are a research assistant with three tools: knowledge_base_search, web_search, and calculator.
@@ -187,6 +204,8 @@ DEFAULT TO USING A TOOL. Treat "answer from my own knowledge" as the exception, 
 - When unsure whether a request needs a tool, call one. A wasted tool call costs less than a wrong or outdated answer stated as fact.
 
 After using tools, answer concisely based on what they returned — do not add facts the tools didn't provide.
+
+Your response is hard-capped at ~500 tokens (roughly 350-400 words) — anything beyond that gets cut off mid-sentence. Always answer the core question first, in full, before adding any extra detail, so a cutoff never loses the actual answer.
 
 LENGTH DISCIPLINE for large or multi-part requests (multi-day itineraries, plans spanning several locations/topics, long comparisons, "give me everything about X"): you are running on a tight token budget, so do not write an exhaustive day-by-day or item-by-item breakdown in one response. Instead:
 - Give a compact overview: for a multi-day/multi-location request, one short paragraph or a tight table summarizing the whole thing (e.g. one line per day or per location, not a paragraph each).
