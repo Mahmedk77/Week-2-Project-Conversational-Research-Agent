@@ -107,9 +107,33 @@ export default function Home() {
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messageCountRef = useRef(0);
 
+  /**
+   * Follow the conversation without fighting the user.
+   *
+   * The naive version — smooth-scrolling on every `messages` change — fires
+   * dozens of times a second while text streams in, and each new smooth
+   * animation interrupts the one before it. That reads as a jerky up/down
+   * judder. So: animate only when a message is actually added, jump instantly
+   * while content grows, and stay put entirely if the user has scrolled up to
+   * read something.
+   */
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const isNewMessage = messages.length !== messageCountRef.current;
+    messageCountRef.current = messages.length;
+
+    const distanceFromBottom =
+      document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+    // Generous threshold: the sticky composer covers part of the viewport.
+    const isFollowing = distanceFromBottom < 160;
+
+    if (!isNewMessage && !isFollowing) return;
+
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: isNewMessage ? "smooth" : "auto",
+    });
   }, [messages]);
 
   // Drive the countdown. State is only written from the interval callback —
@@ -310,22 +334,24 @@ export default function Home() {
   const hasMessages = messages.length > 0;
 
   return (
-    <div className="flex min-h-screen flex-1 flex-col bg-bg-page">
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-bg-page px-4 py-3">
-        <span className="text-[14px] font-medium text-text-primary">
+    // min-h-dvh, not min-h-screen: 100vh on mobile includes the browser
+    // chrome, which pushes the composer below the visible area.
+    <div className="flex min-h-dvh flex-1 flex-col bg-bg-page">
+      <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-bg-page px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <span className="truncate text-[14px] font-medium text-text-primary">
           Research agent
         </span>
         <button
           type="button"
           onClick={handleClearMemory}
           disabled={clearing}
-          className="flex min-h-11 items-center gap-1.5 rounded-full px-3.5 text-[13px] text-text-primary/60 transition-colors hover:text-text-primary/90 disabled:opacity-40"
+          className="-mr-1.5 flex min-h-11 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] text-text-primary/60 transition-colors hover:text-text-primary/90 disabled:opacity-40"
         >
           Clear memory
         </button>
       </header>
 
-      <div className="mx-auto flex w-full max-w-[720px] flex-1 flex-col">
+      <div className="mx-auto flex w-full min-w-0 max-w-[720px] flex-1 flex-col">
         {hasMessages ? (
           <div className="flex-1 pb-4 pt-2">
             {messages.map((message) => (
@@ -338,15 +364,18 @@ export default function Home() {
         )}
       </div>
 
-      <div className="sticky bottom-0 bg-bg-page">
+      {/* Single sticky container for notice + composer. The gradient lets
+          content fade out underneath rather than cutting off hard, and the
+          safe-area padding keeps it clear of the iPhone home indicator. */}
+      <div className="sticky bottom-0 w-full bg-gradient-to-t from-bg-page via-bg-page to-transparent pt-4 pb-[max(env(safe-area-inset-bottom),0px)]">
         {coolingDown && (
           <div
             role="status"
             aria-live="polite"
-            className="mx-auto mb-1 flex w-full max-w-[720px] items-center gap-2 px-4 text-[13px] text-text-primary/60"
+            className="status-fade-in mx-auto mb-1.5 flex w-full max-w-[720px] items-center gap-2 px-4 text-[12.5px] tracking-[0.01em]"
           >
-            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-text-primary/40" />
-            <span>
+            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-text-primary/35" />
+            <span className="status-shimmer">
               Usage limit reached — you can send again in {secondsLeft}
               {secondsLeft === 1 ? " second" : " seconds"}.
             </span>

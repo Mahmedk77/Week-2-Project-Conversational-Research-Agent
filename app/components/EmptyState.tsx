@@ -1,6 +1,6 @@
 "use client";
 
-import { Sparkles, BookOpen, Brain, Newspaper, BotMessageSquare } from "lucide-react";
+import { BookOpen, Brain, Newspaper, BotMessageSquare } from "lucide-react";
 
 const SUGGESTIONS = [
   { icon: BookOpen, text: "What is pgvector?" },
@@ -15,7 +15,7 @@ export function EmptyState({ onSelect }: { onSelect: (text: string) => void }) {
         <BotMessageSquare className="h-8 w-8" strokeWidth={1.75} />
       </div>
       <h1 className="text-2xl font-medium text-text-primary">Hi, there!</h1>
-      <p className="mt-1.5 text-[15px] text-text-primary/60">
+      <p className="mt-1.5 text-balance text-center text-[15px] text-text-primary/60">
         Ask me anything about LangChain, Supabase, or n8n
       </p>
 
@@ -25,12 +25,14 @@ export function EmptyState({ onSelect }: { onSelect: (text: string) => void }) {
             key={text}
             type="button"
             onClick={() => onSelect(text)}
-            className="flex flex-col items-start gap-2.5 rounded-2xl border border-border bg-surface-1 p-3.5 text-left transition-colors hover:bg-border/30  active:bg-border/50"
+            // Row layout on phones (cards would otherwise be tall and empty),
+            // stacked once there are three across.
+            className="flex min-h-11 items-center gap-2.5 rounded-2xl border border-border bg-surface-1 p-3.5 text-left transition-colors hover:bg-border/30 active:bg-border/50 sm:flex-col sm:items-start"
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-border/50 text-text-primary/70">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-border/50 text-text-primary/70">
               <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
             </span>
-            <span className="text-[13.5px] leading-snug text-text-primary/80">{text}</span>
+            <span className="min-w-0 text-[13.5px] leading-snug text-text-primary/80">{text}</span>
           </button>
         ))}
       </div>

@@ -8,10 +8,29 @@ import type { ChatMessage } from "./types";
 
 function TypingDots() {
   return (
-    <span className="inline-flex items-center gap-1 py-1">
+    <span className="inline-flex items-center gap-1">
       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-text-primary/40 [animation-delay:0ms]" />
       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-text-primary/40 [animation-delay:150ms]" />
       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-text-primary/40 [animation-delay:300ms]" />
+    </span>
+  );
+}
+
+/** Dots with the current step named underneath, not beside. */
+function ThinkingIndicator({ status }: { status?: string }) {
+  return (
+    <span className="inline-flex flex-col items-start gap-1.5 py-1">
+      <TypingDots />
+      {status && (
+        <span
+          // `key` restarts the entrance animation when the label changes
+          // (e.g. "Thinking…" -> "Model busy: trying a backup…").
+          key={status}
+          className="status-fade-in status-shimmer text-[12.5px] font-normal tracking-[0.01em]"
+        >
+          {status}
+        </span>
+      )}
     </span>
   );
 }
@@ -47,12 +66,7 @@ export function ChatMessageItem({
     <div className="px-4 py-2">
       <div className="max-w-full text-[15px] leading-relaxed text-text-primary">
         {showTyping ? (
-          <span className="inline-flex items-center gap-2">
-            <TypingDots />
-            {message.status && (
-              <span className="text-[13px] text-text-primary/45">{message.status}</span>
-            )}
-          </span>
+          <ThinkingIndicator status={message.status} />
         ) : message.streaming ? (
           <span className="whitespace-pre-wrap break-words">{message.content}</span>
         ) : (

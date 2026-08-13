@@ -33,39 +33,43 @@ export function ChatInput({
     }
   };
 
+  // Positioning/stickiness is owned by the page so the rate-limit notice can
+  // share one sticky container with the composer.
   return (
-    <div className="sticky bottom-0 w-full bg-gradient-to-t from-bg-page via-bg-page to-transparent pb-[max(env(safe-area-inset-bottom),0px)] pt-4">
-      <div className="mx-auto w-full max-w-[720px] px-4">
-        <div className="flex items-end gap-2 rounded-3xl border border-border bg-surface-1 px-3 py-2 shadow-none transition-shadow focus-within:ring-2 focus-within:ring-border">
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask anything"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck="false"
-            className="no-scrollbar flex-1 resize-none appearance-none overflow-y-auto bg-transparent py-1.5 text-[15px] leading-relaxed text-text-primary placeholder-text-primary/40 outline-none"
-            style={{ minHeight: "1.75rem", maxHeight: `${MAX_TEXTAREA_HEIGHT}px` }}
-          />
+    <div className="mx-auto w-full max-w-[720px] px-4">
+      <div className="flex items-end gap-2 rounded-3xl border border-border bg-surface-1 px-3 py-2 shadow-none transition-shadow focus-within:ring-2 focus-within:ring-border">
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask anything"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck="false"
+          // 16px on mobile is deliberate: iOS Safari zooms the whole page when
+          // focusing an input under 16px. Desktop keeps the tighter 15px.
+          className="no-scrollbar flex-1 resize-none appearance-none overflow-y-auto bg-transparent py-1.5 text-[16px] leading-relaxed text-text-primary placeholder-text-primary/40 outline-none sm:text-[15px]"
+          style={{ minHeight: "1.75rem", maxHeight: `${MAX_TEXTAREA_HEIGHT}px` }}
+        />
 
-          <button
-            type="button"
-            onClick={onSend}
-            disabled={disabled || !value.trim()}
-            aria-label="Send message"
-            className="flex h-9 w-9 shrink-0 items-center justify-center hover:bg-black/80 rounded-full bg-text-primary text-bg-page transition-opacity disabled:opacity-30"
-          >
-            <ChevronUp className="h-5 w-5" strokeWidth={1.75} />
-          </button>
-        </div>
-
-        <p className="mt-2 pb-3 text-center text-[12px] text-text-primary/40">
-          Responses may be inaccurate — verify important info
-        </p>
+        <button
+          type="button"
+          onClick={onSend}
+          disabled={disabled || !value.trim()}
+          aria-label="Send message"
+          // 44px hit area on touch screens (the accessible minimum), trimmed
+          // to 36px on pointer devices where it would look oversized.
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-text-primary text-bg-page transition-opacity hover:bg-black/80 disabled:opacity-30 sm:h-9 sm:w-9"
+        >
+          <ChevronUp className="h-5 w-5" strokeWidth={1.75} />
+        </button>
       </div>
+
+      <p className="mt-2 pb-3 text-center text-[12px] text-text-primary/40">
+        Responses may be inaccurate — verify important info
+      </p>
     </div>
   );
 }

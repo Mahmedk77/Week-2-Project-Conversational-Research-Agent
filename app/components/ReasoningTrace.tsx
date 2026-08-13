@@ -86,14 +86,16 @@ export function ReasoningTrace({ steps }: { steps: ReasoningStep[] }) {
       {expanded && (
         <div className="mt-1.5 space-y-2 rounded-xl border border-border bg-surface-1 p-3 text-[13px] leading-relaxed text-text-primary/70">
           {steps.map((step, i) => (
-            <div key={i} className="flex gap-2">
+            // min-w-0 lets the flex child actually shrink; without it a long
+            // query or URL forces the panel wider than the phone screen.
+            <div key={i} className="flex min-w-0 gap-2">
               {step.type === "action" ? (
                 <>
                   <Wrench
                     className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-primary/40"
                     strokeWidth={1.75}
                   />
-                  <div>
+                  <div className="min-w-0 break-words">
                     {step.tool_calls.map((call, j) => (
                       <div key={j}>
                         <span className="font-medium text-text-primary/85">
@@ -110,7 +112,7 @@ export function ReasoningTrace({ steps }: { steps: ReasoningStep[] }) {
                     className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-primary/40"
                     strokeWidth={1.75}
                   />
-                  <div>
+                  <div className="min-w-0 break-words">
                     <span className="font-medium text-text-primary/85">Result:</span>{" "}
                     <span className="font-mono text-[12px] text-text-primary/60">
                       {summarizeObservation(step.content)}
