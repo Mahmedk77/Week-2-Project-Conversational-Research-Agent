@@ -47,7 +47,12 @@ export function ChatMessageItem({
     <div className="px-4 py-2">
       <div className="max-w-full text-[15px] leading-relaxed text-text-primary">
         {showTyping ? (
-          <TypingDots />
+          <span className="inline-flex items-center gap-2">
+            <TypingDots />
+            {message.status && (
+              <span className="text-[13px] text-text-primary/45">{message.status}</span>
+            )}
+          </span>
         ) : message.streaming ? (
           <span className="whitespace-pre-wrap break-words">{message.content}</span>
         ) : (

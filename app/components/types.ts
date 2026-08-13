@@ -10,4 +10,6 @@ export type ChatMessage = {
   content: string;
   reasoning?: ReasoningStep[];
   streaming?: boolean;
+  /** Transient progress note shown while waiting (e.g. during model fallback). */
+  status?: string;
 };

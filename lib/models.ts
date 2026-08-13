@@ -34,14 +34,20 @@ function groqChatModel(model: string) {
  *
  *   gpt-oss-safeguard-20b  tools 5/5   post-tool 2511 chars   <- both pass
  *   gpt-oss-20b            tools 5/5   post-tool 2069 chars   <- both pass
- *   gpt-oss-120b           tools 5/5   post-tool 0 CHARS      <- BROKEN
+ *   gpt-oss-120b           tools 5/5   post-tool 0 CHARS      <- BROKEN, removed
  *   llama-3.3-70b          tools 1/5   (mangles tool name)    <- BROKEN
  *   llama-3.1-8b           tools 4/5   post-tool ok           <- flaky
  *   qwen3.6-27b            leaks raw <think> into content, always finish=length
  *
- * `gpt-oss-120b` calls tools correctly but returns ZERO content on the step
- * after a tool result, producing an empty answer. Do not promote it above the
- * working models; it is kept last only as a better-than-nothing option.
+ * Only the two models that pass BOTH halves are in the chain. `gpt-oss-120b`
+ * was tried as a third and removed: it calls tools correctly but returns zero
+ * content after a tool result, so it can only ever contribute an empty answer
+ * or a failed request — extra latency and tokens for no possible benefit. A
+ * third model is worth adding only if it passes both probes in
+ * `scripts/` first.
+ *
+ * Both entries share identical tool-calling behaviour, so one schema suits
+ * both and a fallback never changes answer quality.
  *
  * Do NOT add `groq/compound` or `groq/compound-mini`: agentic "Systems" with
  * built-in tools, incompatible with bindTools() (confirmed 400 error).
@@ -49,7 +55,6 @@ function groqChatModel(model: string) {
 export const AGENT_MODEL_CHAIN = [
   "openai/gpt-oss-safeguard-20b",
   "openai/gpt-oss-20b",
-  "openai/gpt-oss-120b",
 ] as const;
 
 export const agentModels = AGENT_MODEL_CHAIN.map((model) => ({

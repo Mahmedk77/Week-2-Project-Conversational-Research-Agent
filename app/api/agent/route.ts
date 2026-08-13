@@ -90,11 +90,107 @@ function isDailyLimitError(err: unknown): boolean {
  * than failing the whole request.
  */
 function isToolCallParseError(err: unknown): boolean {
-    const message = (err as { message?: unknown } | null)?.message;
+    // Prefer Groq's machine-readable code: the prose has already changed three
+    // times ("failed to parse tool call arguments", "tool call validation
+    // failed", "the model generated output that could not be parsed") while
+    // the code stayed put.
+    const e = err as { code?: unknown; error?: { code?: unknown }; message?: unknown } | null;
+    if (e?.code === "tool_use_failed" || e?.error?.code === "tool_use_failed") return true;
+
+    const message = e?.message;
     return (
         typeof message === "string" &&
-        /failed to parse tool call arguments|tool call validation failed/i.test(message)
+        /failed to parse tool call arguments|tool call validation failed|output that could not be parsed/i.test(
+            message
+        )
     );
+}
+
+/**
+ * Rolling record of real token spend (from the models' own usage_metadata, not
+ * estimates) over the last minute, so the client can be told to hold off before
+ * a request fails rather than after.
+ *
+ * Process-local like the cooldown map: good enough to protect a single running
+ * instance, not a shared source of truth across serverless workers.
+ */
+const TOKEN_WINDOW_MS = 60_000;
+const PER_MODEL_TPM = 8000;
+
+const tokenSpend: { at: number; tokens: number }[] = [];
+
+function recordTokenSpend(tokens: number): void {
+    if (tokens > 0) tokenSpend.push({ at: Date.now(), tokens });
+}
+
+function tokensUsedLastMinute(): number {
+    const cutoff = Date.now() - TOKEN_WINDOW_MS;
+    while (tokenSpend.length > 0 && tokenSpend[0].at < cutoff) tokenSpend.shift();
+    return tokenSpend.reduce((sum, entry) => sum + entry.tokens, 0);
+}
+
+/**
+ * What the client needs to decide whether to let the user send again.
+ * `blockedForMs` is only non-zero when EVERY model is in cooldown — i.e. we
+ * know the next request would fail, rather than merely suspecting it.
+ */
+function budgetSnapshot() {
+    const cooldowns = agentModels.map(({ model }) => cooldownRemainingMs(model));
+    const blockedForMs = cooldowns.every((ms) => ms > 0) ? Math.min(...cooldowns) : 0;
+    return {
+        usedLastMinute: tokensUsedLastMinute(),
+        limit: PER_MODEL_TPM * agentModels.length,
+        blockedForMs,
+    };
+}
+
+/**
+ * The agent hit `recursionLimit` without settling on an answer — almost always
+ * the model looping on tool calls (re-searching with reworded queries instead
+ * of answering from what it already has). Not retryable on another model: the
+ * next one would loop the same way and burn another full budget. Handled by
+ * keeping whatever was produced and telling the user plainly.
+ */
+function isRecursionLimitError(err: unknown): boolean {
+    const name = (err as { name?: unknown } | null)?.name;
+    if (name === "GraphRecursionError") return true;
+    const message = (err as { message?: unknown } | null)?.message;
+    return typeof message === "string" && /recursion limit of \d+ reached/i.test(message);
+}
+
+/**
+ * Remembers when each model is expected to be usable again, so a request that
+ * arrives during a rate-limit window skips models already known to be blocked
+ * instead of spending ~8s discovering it. Without this, three exhausted models
+ * cost the user ~26s of silence before any message appears.
+ *
+ * Best-effort only: this lives in process memory, so it is not shared across
+ * serverless instances. A stale or missing entry just means we try the model
+ * and find out the slow way — never a wrong answer.
+ */
+const modelCooldownUntil = new Map<string, number>();
+
+/** Daily exhaustion won't clear for hours; don't retry that model soon. */
+const DAILY_COOLDOWN_MS = 30 * 60 * 1000;
+const DEFAULT_COOLDOWN_MS = 15 * 1000;
+const MAX_COOLDOWN_MS = 60 * 60 * 1000;
+
+function cooldownRemainingMs(model: string): number {
+    const until = modelCooldownUntil.get(model);
+    if (until === undefined) return 0;
+    const remaining = until - Date.now();
+    if (remaining <= 0) {
+        modelCooldownUntil.delete(model);
+        return 0;
+    }
+    return remaining;
+}
+
+function markModelCooldown(model: string, err: unknown): void {
+    const ms = isDailyLimitError(err)
+        ? DAILY_COOLDOWN_MS
+        : Math.min(getRetryAfterMs(err) ?? DEFAULT_COOLDOWN_MS, MAX_COOLDOWN_MS);
+    modelCooldownUntil.set(model, Date.now() + ms);
 }
 
 function formatRateLimitMessage(retryAfterMs: number | undefined, daily: boolean): string {
@@ -135,7 +231,14 @@ Reply with only the updated summary text, under ${MAX_SUMMARY_CHARS} characters.
     return trimmed.length > MAX_SUMMARY_CHARS ? trimmed.slice(0, MAX_SUMMARY_CHARS) : trimmed;
 };
 
-const MAX_TOOL_SNIPPET_CHARS = 150;
+/**
+ * 150 was too aggressive: search snippets were being cut off inside page
+ * navigation chrome ("Live Score | BROWSE BY | Estadio…") before any actual
+ * fact appeared, so the model kept re-searching for information it had already
+ * paid for. A useless result costs a whole extra agent step (~1.5K tokens),
+ * which dwarfs the ~40 tokens saved by trimming harder.
+ */
+const MAX_TOOL_SNIPPET_CHARS = 350;
 
 function truncateSnippet(text: string): string {
     if (text.length <= MAX_TOOL_SNIPPET_CHARS) return text;
@@ -287,56 +390,150 @@ const kb_searchTool = tool(
     }
 );
 
-const tavily_searchTool = tool(
-    async ({ query, url, maxResults, recencyDays }) => {
-        // `url` is not a real search option — it exists only because the model
-        // sometimes passes back a `url` it saw in earlier results instead of a
-        // query. Accepting and folding it in turns a hard schema-validation
-        // crash into a usable search.
-        const effectiveQuery = (query ?? url ?? "").trim();
-        if (!effectiveQuery) {
-            return "Error: `query` is required and must be search terms, not a URL.";
-        }
+/**
+ * Coerce a model-supplied value to a bounded integer. The raw JSON Schema
+ * below is not validated by LangChain the way a zod schema is, so the model
+ * can send `"5"` or `12` where an int in range is expected — clamp rather than
+ * fail, since a bad number should never cost the user their answer.
+ */
+function boundedInt(value: unknown, min: number, max: number): number | undefined {
+    const n = typeof value === "string" ? Number(value) : value;
+    if (typeof n !== "number" || !Number.isFinite(n)) return undefined;
+    return Math.min(max, Math.max(min, Math.trunc(n)));
+}
 
-        try {
-            const tavily_res = await tavilyClient.search(effectiveQuery, {
-                maxResults: maxResults ?? 3,
-                ...(recencyDays !== undefined ? { days: recencyDays } : {}),
-            });
-            return JSON.stringify(
-                tavily_res.results.map((r) => ({ title: r.title, url: r.url, snippet: truncateSnippet(r.content) }))
-            );
-        } catch (error) {
-            return `Error fetching results from web: ${(error as Error).message}`;
-        }
-    },
-    {
+/**
+ * Hard ceiling on searches per user turn.
+ *
+ * A prompt instruction was not enough: the model was observed making 8+
+ * searches for one question, re-querying to confirm an answer it had already
+ * found, and burning 23.9K tokens before running out of agent steps. This is
+ * enforced in code so it cannot be ignored — once spent, the tool returns an
+ * instruction to answer instead of performing another search.
+ */
+const MAX_SEARCHES_PER_TURN = 3;
+
+/**
+ * Built per request so the search budget is scoped to one user turn rather
+ * than shared across everyone hitting the server.
+ */
+function createWebSearchTool() {
+    let searchesUsed = 0;
+
+    return tool(
+        async (rawArgs) => {
+            // Args arrive unvalidated (raw JSON Schema, see below), so read
+            // them defensively instead of destructuring typed fields.
+            const args = (rawArgs ?? {}) as Record<string, unknown>;
+            const asText = (v: unknown) => (typeof v === "string" ? v : "");
+
+            if (searchesUsed >= MAX_SEARCHES_PER_TURN) {
+                return `Search budget spent (${MAX_SEARCHES_PER_TURN} of ${MAX_SEARCHES_PER_TURN} used). Do NOT call web_search again. Answer now from the results you already have, and state plainly anything you could not confirm.`;
+            }
+
+            // `url` is not a real search option — it exists only because the
+            // model sometimes passes back a `url` it saw in earlier results
+            // instead of a query. Folding it in salvages the call.
+            const effectiveQuery = (asText(args.query) || asText(args.url)).trim();
+            if (!effectiveQuery) {
+                // Phrased as an instruction: this string goes back to the model
+                // as the tool result, and is what lets it recover without a 400.
+                // Deliberately does not consume budget — nothing was searched.
+                return 'Error: no search terms were provided. Call web_search again with {"query": "<your search terms>"}.';
+            }
+
+            const maxResults = boundedInt(args.maxResults, 1, 10);
+            const recencyDays = boundedInt(args.recencyDays, 1, 365);
+
+            searchesUsed++;
+            const remaining = MAX_SEARCHES_PER_TURN - searchesUsed;
+
+            try {
+                const tavily_res = await tavilyClient.search(effectiveQuery, {
+                    maxResults: maxResults ?? 3,
+                    // Tavily's own synthesised answer. Costs ~40 tokens and
+                    // usually settles the question outright, which is far
+                    // cheaper than the extra search it prevents.
+                    includeAnswer: true,
+                    ...(recencyDays !== undefined ? { days: recencyDays } : {}),
+                });
+
+                return JSON.stringify({
+                    answer: tavily_res.answer ?? null,
+                    results: tavily_res.results.map((r) => ({
+                        title: r.title,
+                        url: r.url,
+                        snippet: truncateSnippet(r.content),
+                    })),
+                    // Told directly to the model so the ceiling is visible to
+                    // it, not just enforced behind its back.
+                    searchesRemaining: remaining,
+                    note:
+                        remaining === 0
+                            ? "This was your last search. Answer now from what you have."
+                            : undefined,
+                });
+            } catch (error) {
+                return `Error fetching results from web: ${(error as Error).message}`;
+            }
+        },
+        {
         name: "web_search",
         // The parameter list is spelled out deliberately. This tool RETURNS
         // objects containing `url`, and the model has been observed feeding
-        // that back as an input ("additionalProperties 'url' not allowed",
-        // and previously inventing `topn`/`recency_days`). Naming the only
-        // three accepted inputs — and that `query` is required — costs ~30
-        // tokens and prevents a hard validation crash.
+        // that back as an input, as well as inventing `topn`/`recency_days`
+        // and `id`/`cursor`. Naming the accepted inputs costs ~30 tokens and
+        // reduces how often that happens.
         description:
             "Search the web for current or real-time information. Accepts ONLY these parameters: query (required, a search-terms string), maxResults (optional number), recencyDays (optional number). You cannot pass a URL or fetch a specific page — describe what you want in `query` instead. Example: {\"query\": \"latest LangChain version\"}",
-        // looseObject is load-bearing. The model has now invented three
-        // different extra parameters across traces (`topn`/`recency_days`,
-        // then `url`, then `id`/`cursor`), and each one was a hard crash
-        // because a strict object sets additionalProperties:false in the
-        // generated JSON Schema. Denying unknown keys one at a time is
-        // unwinnable; accepting and ignoring them costs nothing, since only
-        // the four fields below are ever read.
-        schema: z.looseObject({
-            query: z.string().optional().describe("Search terms, e.g. 'latest LangChain version'. Required."),
-            // Tolerated, not advertised: the tool returns objects containing
-            // `url`, and the model sometimes echoes one back as input.
-            url: z.string().optional(),
-            maxResults: z.number().int().min(1).max(10).optional().describe("How many results, default 3"),
-            recencyDays: z.number().int().min(1).optional().describe("Only results from the last N days"),
-        }),
-    }
-);
+        /**
+         * RAW JSON SCHEMA ON PURPOSE — do not "modernise" this back to zod.
+         *
+         * Groq validates tool calls server-side against the schema we send. A
+         * zod schema (even `z.looseObject`) is converted by LangChain's
+         * `convertToOpenAITool`, which hard-codes `additionalProperties: false`
+         * and silently discards the looseness. The model reliably invents extra
+         * keys on this tool, so every invented key became a `tool_use_failed`
+         * 400 and a wasted model call.
+         *
+         * A raw JSON Schema object is passed through untouched, so
+         * `additionalProperties: true` survives to the wire and unknown keys
+         * are simply ignored. Verified against `convertToOpenAITool`.
+         *
+         * Trade-off: LangChain no longer parses/validates args for us, so the
+         * handler above reads them defensively.
+         */
+        schema: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Search terms, e.g. 'latest LangChain version'. Required.",
+                },
+                maxResults: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 10,
+                    description: "How many results, default 3",
+                },
+                recencyDays: {
+                    type: "integer",
+                    minimum: 1,
+                    description: "Only results from the last N days",
+                },
+            },
+            // `query` is deliberately NOT in `required`. Groq enforces
+            // `required` server-side and answers a violation with a 400, which
+            // costs a whole model call and cannot be caught in the handler.
+            // Leaving it out means a query-less call reaches the tool, which
+            // returns a plain error string the model can read and correct from
+            // inside the same loop — a recoverable tool result instead of a
+            // failed request.
+            additionalProperties: true,
+        },
+        }
+    );
+}
 
 /**
  * Kept deliberately terse: LangGraph resends the full message history on every
@@ -358,6 +555,8 @@ TOOL USE — default to calling a tool; answering from your own knowledge is the
 - If knowledge_base_search returns no match, call web_search before answering.
 - Skip tools ONLY for: greetings, clarifying questions, opinions asked for as opinions, or things already established earlier in this conversation.
 - When unsure, call a tool. A wasted call beats a wrong fact.
+- web_search is HARD-LIMITED to 3 searches per question and each result tells you how many remain. Make them count: one well-chosen query beats three narrow ones. Never repeat a search with reworded terms, never search to double-check something a result already told you, and never search again just because a snippet looked thin — say plainly what you could not confirm instead. Each result may include an "answer" field; if it answers the question, use it and stop searching.
+- Once searches are spent, or you have enough to respond, answer immediately. Running out of steps means the user gets nothing, which is worse than a partial answer.
 
 ANSWERING:
 - Use only what the tools returned; add no facts they didn't provide.
@@ -375,6 +574,23 @@ FORMATTING:
  */
 const MAX_MESSAGE_CHARS = 4000;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Transient progress frames, so a slow fallback doesn't look like a hung app.
+ * Wrapped in RS (0x1E) control characters, which can never appear in model
+ * output or JSON text, so the client can strip them from the visible answer
+ * without risk of eating real content.
+ */
+const STATUS_SENTINEL = "\x1e";
+const statusFrame = (text: string) => `${STATUS_SENTINEL}${text}${STATUS_SENTINEL}`;
+
+/**
+ * Max agent steps per turn. One tool call costs two steps (model decides, tool
+ * runs), so this allows roughly 7 tool calls. Raising it does not fix a looping
+ * model — it just lets the loop burn more of the token budget before stopping.
+ * The real guard is the tool-call ceiling in SYSTEM_PROMPT.
+ */
+const RECURSION_LIMIT = 15;
 
 export async function POST(request: Request) {
     let body: unknown;
@@ -404,7 +620,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "sessionId is malformed" }, { status: 400 });
     }
 
-    const tools = [kb_searchTool, tavily_searchTool, calculatorTool];
+    // web_search carries a per-turn search budget, so it must be built fresh
+    // for each request rather than shared at module scope.
+    const tools = [kb_searchTool, createWebSearchTool(), calculatorTool];
     const currentSummary = await load_memory(sessionId);
 
     const userContent = currentSummary
@@ -428,50 +646,109 @@ export async function POST(request: Request) {
 
                 const eventStream = await agent.stream(
                     { messages: [{ role: "user" as const, content: userContent }] },
-                    { recursionLimit: 15, streamMode: "messages" }
+                    { recursionLimit: RECURSION_LIMIT, streamMode: "messages" }
                 );
 
-                for await (const [chunk] of eventStream) {
-                    if (chunk instanceof AIMessageChunk && chunk.tool_calls?.length) {
-                        reasoningTrace.push({
-                            type: "action",
-                            tool_calls: chunk.tool_calls.map((call) => ({
-                                name: call.name,
-                                args: call.args,
-                            })),
-                        });
+                let exhaustedSteps = false;
+                try {
+                    for await (const [chunk] of eventStream) {
+                        if (chunk instanceof AIMessageChunk && chunk.tool_calls?.length) {
+                            reasoningTrace.push({
+                                type: "action",
+                                tool_calls: chunk.tool_calls.map((call) => ({
+                                    name: call.name,
+                                    args: call.args,
+                                })),
+                            });
+                        }
+                        if (chunk instanceof ToolMessage) {
+                            reasoningTrace.push({
+                                type: "observation",
+                                tool: chunk.name ?? "unknown",
+                                content: String(chunk.content),
+                            });
+                        }
+                        if (chunk instanceof AIMessageChunk && chunk.usage_metadata) {
+                            // Real spend for this step, reported by the model.
+                            // Every loop step contributes, so this sums the
+                            // whole turn rather than just the final call.
+                            recordTokenSpend(chunk.usage_metadata.total_tokens ?? 0);
+                        }
+                        if (chunk instanceof AIMessageChunk && chunk.content) {
+                            fullAnswer += chunk.content;
+                            emitted = true;
+                            controller.enqueue(encoder.encode(chunk.content as string));
+                        }
                     }
-                    if (chunk instanceof ToolMessage) {
-                        reasoningTrace.push({
-                            type: "observation",
-                            tool: chunk.name ?? "unknown",
-                            content: String(chunk.content),
-                        });
-                    }
-                    if (chunk instanceof AIMessageChunk && chunk.content) {
-                        fullAnswer += chunk.content;
-                        emitted = true;
-                        controller.enqueue(encoder.encode(chunk.content as string));
-                    }
+                } catch (err) {
+                    // A step-budget exhaustion is not a lost request: the tool
+                    // results and any partial text are still worth returning,
+                    // so swallow it here instead of discarding the whole run.
+                    if (!isRecursionLimitError(err)) throw err;
+                    console.warn(`Recursion limit hit after ${reasoningTrace.length} steps`);
+                    exhaustedSteps = true;
                 }
 
-                return { fullAnswer, reasoningTrace, emitted };
+                return { fullAnswer, reasoningTrace, emitted, exhaustedSteps };
             };
 
             let emittedAny = false;
             let lastRetryableError: unknown;
 
+            const sendStatus = (text: string) => {
+                if (!emittedAny) controller.enqueue(encoder.encode(statusFrame(text)));
+            };
+
+            /**
+             * Budget travels in the same control-frame channel as status text.
+             * A frame whose payload starts with `{` is metadata, not something
+             * to display — the client branches on that.
+             */
+            const sendBudget = () => {
+                controller.enqueue(encoder.encode(statusFrame(JSON.stringify(budgetSnapshot()))));
+            };
+
             try {
+                // If every model is already known to be rate-limited, say so now
+                // rather than spending ~8s per model rediscovering it.
+                const allCooling = agentModels.every(({ model }) => cooldownRemainingMs(model) > 0);
+                if (allCooling) {
+                    const soonestMs = Math.min(
+                        ...agentModels.map(({ model }) => cooldownRemainingMs(model))
+                    );
+                    const daily = soonestMs > DEFAULT_COOLDOWN_MS * 10;
+                    controller.enqueue(encoder.encode(formatRateLimitMessage(soonestMs, daily)));
+                    sendBudget();
+                    controller.enqueue(encoder.encode("\n__REASONING_TRACE__\n"));
+                    controller.enqueue(encoder.encode("[]"));
+                    controller.close();
+                    return;
+                }
+
+                let attempt = 0;
                 for (let i = 0; i < agentModels.length; i++) {
                     const { model, instance } = agentModels[i];
+
+                    // Skip models we already know are blocked.
+                    if (cooldownRemainingMs(model) > 0) {
+                        console.warn(`Skipping ${model}, cooling down for ${Math.ceil(cooldownRemainingMs(model) / 1000)}s`);
+                        continue;
+                    }
+
+                    attempt++;
+                    sendStatus(attempt === 1 ? "Thinking…" : "Model busy: trying a backup…");
+
                     try {
-                        const { fullAnswer, reasoningTrace, emitted } = await runWithModel(instance);
+                        const { fullAnswer, reasoningTrace, emitted, exhaustedSteps } =
+                            await runWithModel(instance);
 
                         // A run that finishes without producing any answer text
                         // is a failure, not a success — some models complete the
                         // tool call then return zero content. Treat it like any
                         // other retryable fault so the next model gets a turn.
-                        if (!emitted && !fullAnswer.trim() && i + 1 < agentModels.length) {
+                        // Step exhaustion is excluded: another model would loop
+                        // the same way and burn a second budget for nothing.
+                        if (!emitted && !fullAnswer.trim() && !exhaustedSteps && i + 1 < agentModels.length) {
                             console.warn(`Model ${model} returned an empty answer, falling back to ${agentModels[i + 1].model}`);
                             lastRetryableError = new Error(`${model} returned no content`);
                             continue;
@@ -479,14 +756,22 @@ export async function POST(request: Request) {
 
                         emittedAny ||= emitted;
 
-                        // Last model in the chain and still nothing to show:
-                        // say so rather than rendering an empty bubble.
-                        if (!emitted && !fullAnswer.trim()) {
+                        if (exhaustedSteps) {
+                            // Kept whatever was produced; explain the stop so a
+                            // truncated answer doesn't look like a glitch.
+                            const note = fullAnswer.trim()
+                                ? "\n\n_(Stopped early — this question needed more research steps than allowed. Ask about one part at a time for a fuller answer.)_"
+                                : "That question needed more research steps than allowed. Try narrowing it — ask about one part at a time.";
+                            controller.enqueue(encoder.encode(note));
+                        } else if (!emitted && !fullAnswer.trim()) {
+                            // Last model in the chain and still nothing to show:
+                            // say so rather than rendering an empty bubble.
                             controller.enqueue(
                                 encoder.encode("The model didn't return an answer for that. Please try again.")
                             );
                         }
 
+                        sendBudget();
                         controller.enqueue(encoder.encode("\n__REASONING_TRACE__\n"));
                         controller.enqueue(encoder.encode(JSON.stringify(reasoningTrace)));
 
@@ -514,6 +799,10 @@ export async function POST(request: Request) {
                         const parseFailure = isToolCallParseError(err);
                         if (!rateLimited && !parseFailure) throw err;
 
+                        // Remember the block so the NEXT request skips this
+                        // model instead of waiting to rediscover it.
+                        if (rateLimited) markModelCooldown(model, err);
+
                         lastRetryableError = err;
 
                         console.warn(
@@ -538,6 +827,7 @@ export async function POST(request: Request) {
                     : "The model had trouble completing that request. Please try again.";
                 console.error("All models failed; last error:", lastRetryableError);
                 controller.enqueue(encoder.encode(notice));
+                sendBudget();
                 controller.enqueue(encoder.encode("\n__REASONING_TRACE__\n"));
                 controller.enqueue(encoder.encode("[]"));
                 controller.close();
@@ -552,6 +842,7 @@ export async function POST(request: Request) {
                         ? formatRateLimitMessage(getRetryAfterMs(err), isDailyLimitError(err))
                         : "The model had trouble completing that request. Please try again.";
                     controller.enqueue(encoder.encode(emittedAny ? `\n\n${notice}` : notice));
+                    sendBudget();
                     controller.enqueue(encoder.encode("\n__REASONING_TRACE__\n"));
                     controller.enqueue(encoder.encode("[]"));
                     controller.close();
