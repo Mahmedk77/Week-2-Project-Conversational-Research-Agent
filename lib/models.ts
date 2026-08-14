@@ -3,13 +3,22 @@ import { createClient } from "@supabase/supabase-js";
 import { tavily } from "@tavily/core";
 
 /**
- * maxTokens caps the whole generation, INCLUDING the tokens a tool call's
- * JSON arguments are streamed in. At 500 a verbose model could hit the ceiling
- * mid-arguments, leaving LangChain to reassemble a truncated fragment and
- * throw "Failed to parse tool call arguments as JSON". 800 leaves headroom;
- * it is a ceiling, not a target, so normal answers cost no more than before.
+ * Per-generation output ceiling.
+ *
+ * Sized from measurement, not guesswork: a complete 9-day itinerary answer
+ * (the hardest case tested) needs ~1,234 completion tokens. At 800 that answer
+ * came back `finish_reason: "length"`, cut mid-word; at 1500 it finished
+ * cleanly with `finish_reason: "stop"`.
+ *
+ * Cost is modest because output is NOT multiplied by the agent loop — the
+ * tool-deciding steps emit only a short tool call (~30-80 tokens) and just the
+ * final answer is long. So this adds tokens once per turn, not once per step,
+ * and it is a ceiling rather than a target: short answers are unaffected.
+ *
+ * If this is ever lowered again, lower the "~1500 tokens" figure quoted in
+ * SYSTEM_PROMPT to match — the model is told this number.
  */
-const MAX_OUTPUT_TOKENS = 800;
+const MAX_OUTPUT_TOKENS = 1500;
 
 function groqChatModel(model: string) {
   return new ChatOpenAI({

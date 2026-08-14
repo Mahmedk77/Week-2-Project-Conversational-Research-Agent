@@ -428,7 +428,11 @@ function createWebSearchTool() {
             const asText = (v: unknown) => (typeof v === "string" ? v : "");
 
             if (searchesUsed >= MAX_SEARCHES_PER_TURN) {
-                return `Search budget spent (${MAX_SEARCHES_PER_TURN} of ${MAX_SEARCHES_PER_TURN} used). Do NOT call web_search again. Answer now from the results you already have, and state plainly anything you could not confirm.`;
+                // The caveat instruction is deliberately capped at one line:
+                // when phrased openly the model writes a whole "What I Could /
+                // Could Not Confirm" section, which eats the output budget the
+                // actual answer needs.
+                return `Search budget spent (${MAX_SEARCHES_PER_TURN} of ${MAX_SEARCHES_PER_TURN} used). Do NOT call web_search again. Answer now from the results you already have. If anything is unconfirmed, add ONE short closing sentence naming it — do not write a section or list about it.`;
             }
 
             // `url` is not a real search option — it exists only because the
@@ -555,12 +559,12 @@ TOOL USE — default to calling a tool; answering from your own knowledge is the
 - If knowledge_base_search returns no match, call web_search before answering.
 - Skip tools ONLY for: greetings, clarifying questions, opinions asked for as opinions, or things already established earlier in this conversation.
 - When unsure, call a tool. A wasted call beats a wrong fact.
-- web_search is HARD-LIMITED to 3 searches per question and each result tells you how many remain. Make them count: one well-chosen query beats three narrow ones. Never repeat a search with reworded terms, never search to double-check something a result already told you, and never search again just because a snippet looked thin — say plainly what you could not confirm instead. Each result may include an "answer" field; if it answers the question, use it and stop searching.
+- web_search is HARD-LIMITED to 3 searches per question and each result tells you how many remain. Make them count: one well-chosen query beats three narrow ones. Never repeat a search with reworded terms, never search to double-check something a result already told you, and never search again just because a snippet looked thin — instead note it in ONE short closing sentence at the end of your answer, never as a "what I could/could not confirm" section or list. Each result may include an "answer" field; if it answers the question, use it and stop searching.
 - Once searches are spent, or you have enough to respond, answer immediately. Running out of steps means the user gets nothing, which is worse than a partial answer.
 
 ANSWERING:
 - Use only what the tools returned; add no facts they didn't provide.
-- Output is hard-capped at ~800 tokens and gets cut off mid-sentence. Answer the core question first, in full, before any extra detail.
+- Output is hard-capped at ~1500 tokens and gets cut off mid-sentence. Answer the core question first, in full, before any extra detail.
 - Large/multi-part requests (multi-day itineraries, multi-topic plans, long comparisons, "everything about X"): give a compact overview — one line per day/location, or a tight table — not a paragraph each. Expand only the 3-5 most important points, then offer to go deeper on one part instead of pre-writing it all. Short single-fact answers stay direct.
 
 FORMATTING:
