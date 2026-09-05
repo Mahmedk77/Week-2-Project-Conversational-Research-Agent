@@ -110,7 +110,7 @@ function traceToPlainText(steps: ReasoningStep[]): string {
 
 function StepTile({ children }: { children: React.ReactNode }) {
   return (
-    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-bg-page text-text-secondary">
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-surface-2 text-text-secondary">
       {children}
     </span>
   );
@@ -132,13 +132,13 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-[13px] font-medium text-text-muted">[{index + 1}]</span>
+            <span className="text-[13px] font-medium text-accent-text">[{index + 1}]</span>
             <span className="min-w-0 break-words text-[14px] font-medium text-text-primary">
               {isAction
                 ? step.tool_calls.map((c) => c.name).join(", ") || "tool"
                 : step.tool}
             </span>
-            <span className="rounded-full border border-border bg-bg-page px-2 py-0.5 text-[11.5px] text-text-secondary">
+            <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11.5px] text-text-secondary">
               {isAction ? "tool call" : "result"}
             </span>
           </div>
@@ -151,7 +151,7 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
                 return (
                   <p
                     key={j}
-                    className="mt-2 break-words rounded-xl bg-bg-page px-3 py-2 font-mono text-[12px] leading-relaxed text-text-secondary"
+                    className="mt-2 break-words rounded-xl bg-surface-2 px-3 py-2 font-mono text-[12px] leading-relaxed text-text-secondary"
                   >
                     {args}
                   </p>
@@ -159,7 +159,7 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
               })}
             </>
           ) : (
-            <p className="mt-2 break-words rounded-xl bg-bg-page px-3 py-2 text-[13.5px] italic leading-relaxed text-text-secondary">
+            <p className="mt-2 break-words rounded-xl bg-surface-2 px-3 py-2 text-[13.5px] italic leading-relaxed text-text-secondary">
               <span aria-hidden="true" className="text-text-muted">
                 &ldquo;
               </span>
@@ -251,7 +251,7 @@ function ReasoningDialog({
 
       <div
         ref={panelRef}
-        className="modal-panel relative flex max-h-[86dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-border bg-bg-page sm:max-h-[80vh] sm:max-w-2xl sm:rounded-3xl"
+        className="modal-panel relative flex max-h-[86dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-border bg-surface-card sm:max-h-[80vh] sm:max-w-2xl sm:rounded-3xl"
       >
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4 sm:px-6 sm:py-5">
           <div className="min-w-0">
@@ -272,7 +272,7 @@ function ReasoningDialog({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-surface-card text-text-secondary transition-colors hover:bg-surface-1 hover:text-text-primary"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-surface-card text-text-secondary transition-colors hover:bg-surface-2 hover:text-text-primary"
           >
             <X className="h-4 w-4" strokeWidth={1.75} />
           </button>
@@ -288,7 +288,7 @@ function ReasoningDialog({
           <button
             type="button"
             onClick={handleCopyAll}
-            className="flex min-h-11 items-center gap-2 rounded-full border border-border bg-surface-card px-4 text-[14px] text-text-secondary transition-colors hover:bg-surface-1 hover:text-text-primary sm:min-h-10"
+            className="flex min-h-11 items-center gap-2 rounded-full border border-border bg-surface-card px-4 text-[14px] text-text-secondary transition-colors hover:bg-surface-2 hover:text-text-primary sm:min-h-10"
           >
             {copied ? (
               <Check className="h-4 w-4" strokeWidth={1.75} />
@@ -300,7 +300,7 @@ function ReasoningDialog({
           <button
             type="button"
             onClick={onClose}
-            className="flex min-h-11 items-center rounded-full bg-text-primary px-5 text-[14px] text-bg-page transition-opacity hover:opacity-90 sm:min-h-10"
+            className="flex min-h-11 items-center rounded-full bg-accent px-5 text-[14px] text-accent-contrast transition-colors hover:bg-accent-hover sm:min-h-10"
           >
             Done
           </button>
@@ -312,10 +312,10 @@ function ReasoningDialog({
 }
 
 export function ReasoningTrace({ steps }: { steps: ReasoningStep[] }) {
+  // No "mounted" guard needed before the portal: `open` can only be set by a
+  // click, so `ReasoningDialog` — and its `document.body` portal — never
+  // renders during SSR.
   const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -328,11 +328,11 @@ export function ReasoningTrace({ steps }: { steps: ReasoningStep[] }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex min-h-9 items-center gap-2 rounded-full border border-border bg-bg-page px-3 text-[13px] text-text-secondary transition-colors hover:bg-surface-1 hover:text-text-primary"
+        className="flex min-h-9 items-center gap-2 rounded-full border border-accent-soft-border bg-accent-soft px-3 text-[13px] text-accent-text transition-colors hover:border-accent/50 hover:bg-accent-soft/70"
       >
         <ListTree className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
         View reasoning
-        <span className="rounded-full bg-surface-1 px-1.5 text-[11.5px] text-text-secondary">
+        <span className="rounded-full bg-surface-card px-1.5 text-[11.5px] text-accent-text">
           {steps.length}
         </span>
       </button>
@@ -343,7 +343,7 @@ export function ReasoningTrace({ steps }: { steps: ReasoningStep[] }) {
         </span>
       )}
 
-      {open && mounted && <ReasoningDialog steps={steps} onClose={close} />}
+      {open && <ReasoningDialog steps={steps} onClose={close} />}
     </>
   );
 }

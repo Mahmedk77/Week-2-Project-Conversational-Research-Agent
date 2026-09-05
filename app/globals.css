@@ -1,18 +1,61 @@
 @import "tailwindcss";
 
 :root {
-  /* Surfaces, warm-neutral. `surface-card` is a hair lighter than the page so
-     a bordered card lifts off it without needing a shadow. */
+  /* Surfaces, warm-neutral, no colour hue anywhere in the page/card/border
+     family. `surface-card` is a hair lighter than the page (1.038 apart) so a
+     bordered card lifts off it without needing a shadow — the separation is
+     intentionally subtle; the border carries most of the definition, not the
+     background step.
+     `surface-2` is the one mid-tone used for anything sitting a level deeper
+     than a card (hover states, code blocks, table backgrounds, the reasoning
+     step tiles, the user bubble). `surface-3` is a paler, flatter tone used
+     ONLY for a disabled/inert fill (the composer send button) — it is meant
+     to look washed-out, not like an active surface, so it sits closer to the
+     card than to `surface-2`. */
   --bg-page: #faf9f5;
   --surface-card: #fffdfa;
-  --surface-1: #e8e6dc;
+  --surface-2: #e8e6dc;
+  --surface-3: #f0eee7;
   --border: #d8d5c8;
+  --border-strong: #c2b7a3;
+
+  /* No colour accent by design — "accent" here just means "the near-black
+     ink used as a fill," matching every filled control this app has always
+     used (the send button, the primary dialog action, the empty-state mark).
+     `accent-text` is the same ink used for links/labels rather than a fill,
+     so text stays consistent with `text-primary` instead of introducing a
+     second hue purely for underlines. `accent-soft` is `surface-2` again —
+     the user bubble and the reasoning pill use the identical mid-tone rather
+     than a colour-tinted one. */
+  --accent: #2b2521;
+  --accent-hover: #171310;
+  --accent-contrast: #faf9f5;
+  --accent-text: #2b2521;
+  --accent-soft: #e8e6dc;
+  --accent-soft-border: #d8d5c8;
 
   /* Three text weights instead of one colour at N opacities: opacity-derived
-     greys drift blue over a warm page, these stay in the same warm family. */
+     greys drift blue over a warm page, these stay in the same warm family.
+     `text-muted` is #786d62, NOT the #9a8f84 it was originally authored as —
+     that measured 3.00:1 on the page and 3.12:1 on a card, both under the
+     4.5:1 AA floor for body text, while carrying timestamps, the composer
+     placeholder, and captions. #786d62 is 4.79:1 / 4.97:1 (page/card) and
+     still clearly lighter than `text-secondary`. Do not lighten it again
+     without re-measuring both surfaces — this has regressed once already. */
   --text-primary: #2b2521;
   --text-secondary: #6f645b;
-  --text-muted: #9a8f84;
+  --text-muted: #786d62;
+
+  /* Caution — used by the rate-limit notice. Warm amber, kept low-saturation
+     to match the rest of the palette rather than reading as a bold warning
+     colour. warn-text is 6.02:1 on warn-bg. */
+  --warn-bg: #f6efdf;
+  --warn-border: #e8d9b8;
+  --warn-text: #73551d;
+
+  /* Defined for forward use (not yet referenced by any component); 5.57:1 on
+     a card if it ever carries text. */
+  --danger: #b4402f;
 
   --overlay: rgba(43, 37, 33, 0.34);
 
@@ -25,11 +68,23 @@
   --color-foreground: var(--foreground);
   --color-bg-page: var(--bg-page);
   --color-surface-card: var(--surface-card);
-  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-border: var(--accent-soft-border);
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-border: var(--warn-border);
+  --color-warn-text: var(--warn-text);
+  --color-danger: var(--danger);
   --font-sans: var(--font-lora);
   --font-mono: var(--font-geist-mono);
 }
@@ -239,16 +294,16 @@ body {
 
 /* Shows a fade at whichever edge still has scrollable content; self-hides
    once fully scrolled. Pure CSS, no JS scroll listener needed.
-   Stays on `surface-1` rather than the card colour so a table reads as a
+   Sits on `surface-2` rather than the card colour so a table reads as a
    distinct block inside the (near-white) assistant card. */
 .scroll-fade-x {
   background:
-    linear-gradient(to right, var(--surface-1) 30%, transparent) left,
-    linear-gradient(to left, var(--surface-1) 30%, transparent) right,
+    linear-gradient(to right, var(--surface-2) 30%, transparent) left,
+    linear-gradient(to left, var(--surface-2) 30%, transparent) right,
     linear-gradient(to right, color-mix(in srgb, var(--text-primary) 12%, transparent), transparent) left,
     linear-gradient(to left, color-mix(in srgb, var(--text-primary) 12%, transparent), transparent) right;
   background-repeat: no-repeat;
-  background-color: var(--surface-1);
+  background-color: var(--surface-2);
   background-size: 24px 100%, 24px 100%, 10px 100%, 10px 100%;
   background-attachment: local, local, scroll, scroll;
 }

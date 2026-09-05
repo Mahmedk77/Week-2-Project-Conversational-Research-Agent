@@ -36,7 +36,7 @@ const components: Components = {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-text-primary underline decoration-border underline-offset-2 hover:decoration-text-secondary"
+      className="text-accent-text underline decoration-accent-text/35 underline-offset-2 hover:decoration-accent-text"
     >
       {children}
     </a>
@@ -47,13 +47,13 @@ const components: Components = {
       return <code className={className}>{children}</code>;
     }
     return (
-      <code className="rounded bg-surface-1 px-1.5 py-0.5 font-mono text-[0.88em] text-text-primary">
+      <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[0.88em] text-text-primary">
         {children}
       </code>
     );
   },
   pre: ({ children }) => (
-    <pre className="mb-3 overflow-x-auto rounded-xl bg-surface-1 p-3 text-[0.85em] leading-relaxed last:mb-0">
+    <pre className="mb-3 overflow-x-auto rounded-xl bg-surface-2 p-3 text-[0.85em] leading-relaxed last:mb-0">
       {children}
     </pre>
   ),

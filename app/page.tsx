@@ -98,17 +98,122 @@ function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/**
+ * Transcript persistence.
+ *
+ * The `sessionId` is stored alongside the messages on purpose: server-side
+ * conversation memory (the Supabase `agent_memory` row) is keyed by it, so
+ * restoring the visible transcript without restoring the id would leave the
+ * user looking at a conversation the agent has no memory of.
+ *
+ * Best-effort by design — private browsing, a full quota, or blocked storage
+ * all just mean the transcript starts empty, which is the old behaviour.
+ */
+const STORAGE_KEY = "research-agent:session";
+const MAX_STORED_MESSAGES = 30;
+
+type StoredSession = { sessionId: string; messages: ChatMessage[] };
+
+function loadSession(): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const { sessionId, messages } = parsed as Partial<StoredSession>;
+    if (typeof sessionId !== "string" || !Array.isArray(messages)) return null;
+    // Anything that isn't a well-formed message is dropped rather than
+    // trusted — this is user-writable storage.
+    const clean = messages.filter(
+      (m): m is ChatMessage =>
+        typeof m?.id === "string" &&
+        (m.role === "user" || m.role === "assistant") &&
+        typeof m.content === "string"
+    );
+    return { sessionId, messages: clean };
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(sessionId: string, messages: ChatMessage[]): void {
+  // Fields are listed explicitly rather than spread, so the transient ones
+  // (`streaming`, `status`) can never leak into storage and come back as a
+  // bubble stuck mid-"Thinking…" with no request behind it.
+  const settled = messages
+    .filter((m) => !m.streaming)
+    .slice(-MAX_STORED_MESSAGES)
+    .map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt,
+      reasoning: m.reasoning,
+    }));
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionId, messages: settled }));
+  } catch {
+    // Almost always the quota, and reasoning traces are what fill it. Retry
+    // once with a short, trace-free tail so the conversation still survives a
+    // reload even if the tool detail doesn't.
+    try {
+      const lean = settled.slice(-10).map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        createdAt: m.createdAt,
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionId, messages: lean }));
+    } catch {
+      // Storage is unavailable; the transcript simply won't survive a reload.
+    }
+  }
+}
+
 export default function Home() {
-  const [sessionId] = useState(() => createId());
+  const [sessionId, setSessionId] = useState(() => createId());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [clearing, setClearing] = useState(false);
+  // Restoring happens after mount (localStorage doesn't exist during SSR), so
+  // this gates the save effect — without it the first render would overwrite
+  // the stored transcript with the empty initial state.
+  const [restored, setRestored] = useState(false);
   // Epoch ms until which sending is blocked because every model is rate-limited.
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageCountRef = useRef(0);
+
+  /**
+   * Restore a previous transcript once, on mount.
+   *
+   * The lint rule below is disabled deliberately, not worked around: reading
+   * localStorage IS synchronising with an external system, and it cannot
+   * happen any earlier. Doing it in a lazy `useState` initialiser instead
+   * would make the server's (necessarily empty) render disagree with the
+   * client's and break hydration. Runs exactly once.
+   */
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    const saved = loadSession();
+    if (saved && saved.messages.length > 0) {
+      setSessionId(saved.sessionId);
+      setMessages(saved.messages);
+    }
+    setRestored(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Persist whenever the conversation settles. Gated on `isStreaming` so this
+  // doesn't re-serialise the whole transcript on every streamed chunk; the
+  // flag flipping back to false is itself what triggers the final save.
+  useEffect(() => {
+    if (!restored || isStreaming) return;
+    saveSession(sessionId, messages);
+  }, [restored, isStreaming, messages, sessionId]);
 
   /**
    * Follow the conversation without fighting the user.
@@ -361,7 +466,7 @@ export default function Home() {
             type="button"
             onClick={handleClearMemory}
             disabled={clearing || isStreaming || !hasMessages}
-            className="shrink-0 rounded-full border border-border bg-surface-card px-3.5 py-2 text-[13px] text-text-secondary transition-colors hover:bg-surface-1 hover:text-text-primary disabled:cursor-not-allowed disabled:border-border/60 disabled:bg-transparent disabled:text-text-muted disabled:hover:bg-transparent disabled:hover:text-text-muted"
+            className="shrink-0 rounded-full border border-border bg-surface-card px-3.5 py-2 text-[13px] text-text-secondary transition-colors hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:border-border/60 disabled:bg-transparent disabled:text-text-muted disabled:hover:bg-transparent disabled:hover:text-text-muted"
           >
             {clearing ? "Clearing…" : "Clear conversation"}
           </button>
@@ -389,10 +494,10 @@ export default function Home() {
           <div
             role="status"
             aria-live="polite"
-            className="status-fade-in mx-auto mb-1.5 flex w-full max-w-[720px] items-center gap-2 px-4 text-[12.5px] tracking-[0.01em]"
+            className="status-fade-in mx-auto mb-2 flex w-full max-w-[720px] items-center gap-2 px-4"
           >
-            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-text-muted" />
-            <span className="status-shimmer">
+            <span className="flex w-full items-center gap-2 rounded-xl border border-warn-border bg-warn-bg px-3 py-2 text-[12.5px] tracking-[0.01em] text-warn-text">
+              <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-warn-text" />
               Usage limit reached — you can send again in {secondsLeft}
               {secondsLeft === 1 ? " second" : " seconds"}.
             </span>

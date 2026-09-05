@@ -37,7 +37,7 @@ export function ChatInput({
   // share one sticky container with the composer.
   return (
     <div className="mx-auto w-full max-w-[720px] px-4">
-      <div className="flex items-end gap-2 rounded-3xl border border-border bg-surface-card px-3 py-2 shadow-none transition-shadow focus-within:ring-2 focus-within:ring-border">
+      <div className="flex items-end gap-2 rounded-3xl border border-border-strong bg-surface-card px-3 py-2 shadow-none transition-shadow focus-within:ring-2 focus-within:ring-accent/25">
         <textarea
           ref={textareaRef}
           rows={1}
@@ -61,13 +61,15 @@ export function ChatInput({
           aria-label="Send message"
           // 44px hit area on touch screens (the accessible minimum), trimmed
           // to 36px on pointer devices where it would look oversized.
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-text-primary text-bg-page transition-opacity hover:opacity-90 disabled:bg-surface-1 disabled:text-text-muted sm:h-9 sm:w-9"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-contrast transition-colors hover:bg-accent-hover disabled:bg-surface-3 disabled:text-text-muted sm:h-9 sm:w-9"
         >
           <ChevronUp className="h-5 w-5" strokeWidth={1.75} />
         </button>
       </div>
 
-      <p className="mt-2 pb-3 text-center text-[12px] text-text-muted">
+      {/* `text-secondary`, not `text-muted`: at 12px on the page background
+          muted only reaches 3.8:1, which is under AA for body-size text. */}
+      <p className="mt-2 pb-3 text-center text-[12px] text-text-secondary">
         Responses may be inaccurate — verify important info
       </p>
     </div>

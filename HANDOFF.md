@@ -77,6 +77,43 @@ Fix, in the streaming loop: `openToolArgs` maps a tool call's stream slot (`inde
 
 Verified against the live app: calculator → `{"expression":"34 * 12.5"}`; web_search → `{"query":"…","maxResults":3,"recencyDays":30}`; and a 6-step turn spanning `knowledge_base_search` → `web_search` → `calculator` (three separate model calls, each restarting at index 0) came back strictly alternating action/observation with correct, uncontaminated args on all three.
 
+## Palette, persistence, waiting state (uncommitted)
+
+**Palette — reverted to warm-neutral, no colour accent (current state).** After the sage pass above, the user asked to go back to the very first neutral palette (`bg-page #faf9f5`, `surface-card #fffdfa`, one mid `surface-1`, `text-primary/secondary/muted`, no accent hue) — they found it "much better." Restoring it wholesale would have broken every component that now references `accent`/`accent-text`/`warn-*`/`surface-2`/`surface-3`/`border-strong` (12 class usages across 5 files), so those tokens were kept but redefined IN TERMS OF the neutral palette rather than removed:
+
+- `--accent` / `--accent-hover` / `--accent-contrast` / `--accent-text` are all the near-black ink (`#2b2521`) or its light counterpart (`#faf9f5`) — "accent" now just means "the fill every button already used," not a hue. Zero component edits needed; `ring-accent/25`, `bg-accent`, etc. all just resolve to neutral tones.
+- `--accent-soft` / `--accent-soft-border` = the one mid-tone (`#e8e6dc` / `#d8d5c8`) — the user bubble and the reasoning pill share the identical tone rather than a colour-tinted one, matching the original single-surface design.
+- `--surface-3` (disabled-only) and `--border-strong` (composer's firmer outline) are new but colour-free — `#f0eee7` and `#c2b7a3`, picked to be measurably distinct steps within the same warm family, not new hues.
+- `--warn-bg/border/text` got a real (if muted) amber, since the rate-limit notice is now a bordered callout box that didn't exist in the original design — `#73551d` on `#f6efdf` is 6.02:1.
+- **The one number that was actually wrong**: `--text-muted` as originally authored was `#9a8f84` — 3.00:1 on the page, 3.12:1 on a card, both under the 4.5:1 AA floor, while carrying timestamps/placeholder/captions. This is the exact value behind the original "hurts my eyes" report. Fixed to `#786d62` (4.79:1 / 4.97:1). **This is the second time this token has regressed below AA — do not lighten it again without re-measuring both `bg-page` and `surface-card`.**
+- `.avatar-working::after`'s halo was reverted to a plain `var(--text-muted)` ring (no accent tint), matching what the user's own reference file specified.
+
+Verified live: send button, dialog "Done", and the reasoning step icons are all near-black fills again; `tsc`/`eslint` clean; no `.tsx` file needed changes.
+
+**Palette — sage (superseded by the above).** Current source swatches: `#8B9A6E` sage, `#F7F2EB` off-white, `#EAE2D6` beige, `#EEEEEE` grey. Mapped as page `#eae2d6` / card `#f7f2eb` (1.153 apart — an earlier pairing sat at 1.038, i.e. one flat field with no depth, which is what made the UI look wrong). `surface-2 #f0eade` is derived because insets inside a card need a step the four swatches don't provide.
+
+Three measured constraints, all written into `globals.css`:
+
+- **Sage is a fill-only colour.** `#8b9a6e` is 2.71:1 on a card, so it can never be text and can never carry light text. As a fill with DARK text it is 5.00:1 — hence `--accent-contrast` is the near-black, not the off-white. A separate `--accent-text: #5f6d47` (5.01:1) carries links, the reasoning pill label, and step indices. Keep the two roles apart.
+- **`#eeeeee` is 1.042 against the card** — invisible as a surface, and a neutral grey in a warm palette. It is `--surface-3`, used only where "inert" is the meaning (disabled control), never for layout.
+- **The text ramp was darkened a step** when the page moved to `#eae2d6`: secondary `#6f645b`→`#695f56`, muted `#7d7268`→`#736860`. On the beige page they measured 4.48 and 3.65, under the 4.5:1 body-text threshold; now 4.85/5.59 and 4.22/4.86 (page/card). An earlier round had already fixed muted from `#9a8f84` (3.09:1). **Do not lighten either without re-measuring** — this has regressed twice.
+
+`--surface-1` is gone; usages were remapped (user bubble → `accent-soft`, hovers/insets/code/tables → `surface-2`, disabled fills → `surface-3`). The rate-limit notice uses the `warn-*` trio.
+
+**Transcript persistence.** `localStorage` under `research-agent:session`, in `page.tsx`. Notes that matter:
+
+- The **`sessionId` is stored with the messages** — server-side memory (the Supabase `agent_memory` row) is keyed by it, so restoring the transcript without it would leave the user reading a conversation the agent has no memory of. Verified preserved across reload.
+- Saving is gated on `!isStreaming`, so the transcript isn't re-serialised on every streamed chunk; the flag flipping false is what triggers the final write.
+- Persisted fields are an explicit allowlist, so `streaming`/`status` can never come back as a bubble stuck mid-"Thinking…".
+- Restoring happens in a mount effect (localStorage cannot exist during SSR; a lazy `useState` initialiser would break hydration). That trips `react-hooks/set-state-in-effect`, which is disabled *for that effect only*, with the reason written above it.
+- Quota is handled: on failure it retries once with a 10-message, trace-free tail. Reasoning traces are what fill the quota.
+
+**Waiting state.** One element at a time, never both: dots alone, then at each threshold the dots are *replaced* by a short label (`WAIT_STAGES` in `ChatMessageItem.tsx` — 1.2s "Thinking…", 6s "Working on it…", 14s "Still working…"). A server status that isn't the generic opener (i.e. the model-fallback notice) outranks the ladder the moment it arrives. The bot avatar carries a slow sage halo while working. Verified: 3 dots / no label at t=0.6s, **0 dots** + "Thinking…" at t=1.8s, "Working on it…" at t=6.6s.
+
+The labels are deliberately generic rather than activity words like "Searching…" or "Gathering…". Nothing about what the agent is actually doing reaches the client mid-turn — the reasoning trace only arrives after the answer — so naming an activity would be inventing it. Making those honest needs a small server change: emit a per-tool status frame from the streaming loop in `route.ts` when a tool call is announced (`web_search` → "Searching the web…", etc.), reusing the status channel that already exists. Not done — it touches the pipeline and wasn't asked for.
+
+**Scrollbars** are hidden app-wide in `globals.css`. Verified scrolling still works (page scrolls, dialog list reaches `scrollTop: 400` on a wheel, body locks while the dialog is open and restores on close).
+
 ## Test tooling
 
 `scripts/loadtest.mjs` (modes: smoke/burst/convo/soak) and `scripts/token-audit.mjs` — both hit live APIs and cost real tokens, documented in `scripts/README.md`.

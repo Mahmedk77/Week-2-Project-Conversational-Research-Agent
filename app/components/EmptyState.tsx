@@ -11,7 +11,7 @@ const SUGGESTIONS = [
 export function EmptyState({ onSelect }: { onSelect: (text: string) => void }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-4 pb-24">
-      <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-text-primary text-bg-page">
+      <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-accent-contrast">
         <BotMessageSquare className="h-8 w-8" strokeWidth={1.75} />
       </div>
       <h1 className="text-2xl font-medium text-text-primary">Hi, there!</h1>
@@ -27,9 +27,9 @@ export function EmptyState({ onSelect }: { onSelect: (text: string) => void }) {
             onClick={() => onSelect(text)}
             // Row layout on phones (cards would otherwise be tall and empty),
             // stacked once there are three across.
-            className="flex min-h-11 items-center gap-2.5 rounded-2xl border border-border bg-surface-card p-3.5 text-left transition-colors hover:bg-surface-1 active:bg-border/50 sm:flex-col sm:items-start"
+            className="flex min-h-11 items-center gap-2.5 rounded-2xl border border-border bg-surface-card p-3.5 text-left transition-colors hover:bg-surface-2 active:bg-border/50 sm:flex-col sm:items-start"
           >
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-1 text-text-secondary">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2 text-text-secondary">
               <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
             </span>
             <span className="min-w-0 text-[13.5px] leading-snug text-text-secondary">{text}</span>
