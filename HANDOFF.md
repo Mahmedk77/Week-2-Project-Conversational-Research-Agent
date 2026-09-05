@@ -114,6 +114,16 @@ The labels are deliberately generic rather than activity words like "Searching�
 
 **Scrollbars** are hidden app-wide in `globals.css`. Verified scrolling still works (page scrolls, dialog list reaches `scrollTop: 400` on a wheel, body locks while the dialog is open and restores on close).
 
+## Itinerary/multi-part answers too long (fixed, measured)
+
+User reported the Turkey-itinerary answer "comes too long." The system prompt already had a compactness rule ("give a compact overview... one line per day"), so the actual failure had to be diagnosed, not assumed — measured a real live answer at **689 words / 4554 chars**.
+
+The day-by-day skeleton itself WAS already compact (one bullet per day, complying fine). The bloat was **four bonus sections tacked on after it**: "Key logistics and timing notes," "Top priorities / must-book items," "Alternate pacing options," "Safety, money, and practical tips," plus a closing menu of 3 follow-up choices. The old wording — "Expand only the 3-5 most important points" — was accidentally *licensing* exactly this: the model reads each bonus section as one of its "3-5 points."
+
+Rewrote the rule in `SYSTEM_PROMPT` (`route.ts`) to name the actual failure directly: one compact section only, no separate logistics/priorities/alternates/tips sections, a critical detail folds into its own day's line instead of getting a section, and the close is one offer, not a menu.
+
+Re-measured against the live app, same question: **423 words / 2723 chars** (-38%), then a repeat run at 452 words to confirm it wasn't a one-off. A different multi-part question (visa/best-time/flight-price comparison for Tokyo) stayed properly concise at 198 words with no regression — confirms the fix targets the bonus-section pattern specifically, not compactness in general. The closing offer still comes out as a short 2-item choice rather than strictly one in both runs — a minor residual gap from full literal compliance, left alone since the practical result (short, useful, no bonus sections) is what mattered.
+
 ## Test tooling
 
 `scripts/loadtest.mjs` (modes: smoke/burst/convo/soak) and `scripts/token-audit.mjs` — both hit live APIs and cost real tokens, documented in `scripts/README.md`.
