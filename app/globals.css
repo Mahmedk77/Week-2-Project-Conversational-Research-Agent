@@ -1,10 +1,21 @@
 @import "tailwindcss";
 
 :root {
+  /* Surfaces, warm-neutral. `surface-card` is a hair lighter than the page so
+     a bordered card lifts off it without needing a shadow. */
   --bg-page: #faf9f5;
-  --text-primary: #141413;
+  --surface-card: #fffdfa;
   --surface-1: #e8e6dc;
   --border: #d8d5c8;
+
+  /* Three text weights instead of one colour at N opacities: opacity-derived
+     greys drift blue over a warm page, these stay in the same warm family. */
+  --text-primary: #2b2521;
+  --text-secondary: #6f645b;
+  --text-muted: #9a8f84;
+
+  --overlay: rgba(43, 37, 33, 0.34);
+
   --background: var(--bg-page);
   --foreground: var(--text-primary);
 }
@@ -13,9 +24,12 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-bg-page: var(--bg-page);
-  --color-text-primary: var(--text-primary);
+  --color-surface-card: var(--surface-card);
   --color-surface-1: var(--surface-1);
   --color-border: var(--border);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
   --font-sans: var(--font-lora);
   --font-mono: var(--font-geist-mono);
 }
@@ -32,18 +46,18 @@ body {
 .status-shimmer {
   /* Fallback: a plain muted label if the gradient-on-text trick is
      unavailable, so the text can never render invisible. */
-  color: color-mix(in srgb, var(--text-primary) 45%, transparent);
+  color: var(--text-muted);
 }
 
 @supports (background-clip: text) or (-webkit-background-clip: text) {
   .status-shimmer {
     background: linear-gradient(
       90deg,
-      color-mix(in srgb, var(--text-primary) 34%, transparent) 0%,
-      color-mix(in srgb, var(--text-primary) 34%, transparent) 35%,
-      color-mix(in srgb, var(--text-primary) 68%, transparent) 50%,
-      color-mix(in srgb, var(--text-primary) 34%, transparent) 65%,
-      color-mix(in srgb, var(--text-primary) 34%, transparent) 100%
+      var(--text-muted) 0%,
+      var(--text-muted) 35%,
+      var(--text-secondary) 50%,
+      var(--text-muted) 65%,
+      var(--text-muted) 100%
     );
     background-size: 220% 100%;
     -webkit-background-clip: text;
@@ -59,6 +73,50 @@ body {
   }
   100% {
     background-position: -20% 0;
+  }
+}
+
+/* Waiting state: dots that travel rather than blink, so the row reads as one
+   animation instead of three unrelated flashes. */
+.typing-dot {
+  animation: typing-wave 1.25s ease-in-out infinite;
+}
+
+@keyframes typing-wave {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 0.85;
+    transform: translateY(-3px);
+  }
+}
+
+/* A slow halo on the assistant avatar while it works — the same bot mark used
+   everywhere else in the app, just visibly alive. Drawn on a pseudo-element so
+   it can grow past the 32px chip without affecting layout. */
+.avatar-working::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1px solid var(--text-muted);
+  pointer-events: none;
+  animation: avatar-halo 2s ease-out infinite;
+}
+
+@keyframes avatar-halo {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.9);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
   }
 }
 
@@ -78,20 +136,98 @@ body {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Reasoning dialog: a bottom sheet on phones, a centred dialog from `sm` up.
+   The two need different entrance motion (rise vs. settle), which a Tailwind
+   `sm:` variant can't express on the `animation` shorthand — hence plain CSS.
+   --------------------------------------------------------------------------- */
+.overlay-fade {
+  animation: overlay-fade 180ms ease-out both;
+}
+
+@keyframes overlay-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-panel {
+  animation: sheet-up 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dialog-settle {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (min-width: 640px) {
+  .modal-panel {
+    animation: dialog-settle 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .status-shimmer,
-  .status-fade-in {
+  .status-fade-in,
+  .overlay-fade,
+  .modal-panel,
+  .typing-dot {
     animation: none;
+  }
+
+  /* Hidden rather than frozen: a halted halo would read as a stray ring. */
+  .avatar-working::after {
+    display: none;
   }
 
   /* Drop back to the flat label rather than freezing mid-sweep. */
   .status-shimmer {
     background: none;
-    color: color-mix(in srgb, var(--text-primary) 45%, transparent);
+    color: var(--text-muted);
     -webkit-text-fill-color: currentColor;
   }
 }
 
+/* Scrollbars are hidden app-wide: the page, the reasoning dialog, the
+   composer and wide tables all scroll, and a gutter appearing on each one
+   chopped the layout up. Scrolling itself — wheel, trackpad, touch, keyboard,
+   and programmatic `scrollTo` — is completely unaffected; only the visible
+   bar is gone. */
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
+html,
+body {
+  -ms-overflow-style: none;
+}
+
+/* Kept because the markup still asks for it by name, and so a scroll area can
+   stay bar-less even if the global rule above is ever relaxed. */
 .no-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -102,13 +238,15 @@ body {
 }
 
 /* Shows a fade at whichever edge still has scrollable content; self-hides
-   once fully scrolled. Pure CSS, no JS scroll listener needed. */
+   once fully scrolled. Pure CSS, no JS scroll listener needed.
+   Stays on `surface-1` rather than the card colour so a table reads as a
+   distinct block inside the (near-white) assistant card. */
 .scroll-fade-x {
   background:
     linear-gradient(to right, var(--surface-1) 30%, transparent) left,
     linear-gradient(to left, var(--surface-1) 30%, transparent) right,
-    linear-gradient(to right, rgba(20, 20, 19, 0.12), transparent) left,
-    linear-gradient(to left, rgba(20, 20, 19, 0.12), transparent) right;
+    linear-gradient(to right, color-mix(in srgb, var(--text-primary) 12%, transparent), transparent) left,
+    linear-gradient(to left, color-mix(in srgb, var(--text-primary) 12%, transparent), transparent) right;
   background-repeat: no-repeat;
   background-color: var(--surface-1);
   background-size: 24px 100%, 24px 100%, 10px 100%, 10px 100%;

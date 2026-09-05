@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { BotMessageSquare } from "lucide-react";
 import { ChatInput } from "./components/ChatInput";
 import { ChatMessageItem } from "./components/ChatMessageItem";
 import { EmptyState } from "./components/EmptyState";
@@ -169,12 +170,18 @@ export default function Home() {
       role: "assistant",
       content: "",
       streaming: true,
+      createdAt: Date.now(),
     };
 
     if (options?.skipUserMessage) {
       setMessages((prev) => [...prev, assistantMessage]);
     } else {
-      const userMessage: ChatMessage = { id: createId(), role: "user", content: trimmed };
+      const userMessage: ChatMessage = {
+        id: createId(),
+        role: "user",
+        content: trimmed,
+        createdAt: Date.now(),
+      };
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
     }
     setInput("");
@@ -337,18 +344,28 @@ export default function Home() {
     // min-h-dvh, not min-h-screen: 100vh on mobile includes the browser
     // chrome, which pushes the composer below the visible area.
     <div className="flex min-h-dvh flex-1 flex-col bg-bg-page">
-      <header className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-bg-page px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-        <span className="truncate text-[14px] font-medium text-text-primary">
-          Research agent
-        </span>
-        <button
-          type="button"
-          onClick={handleClearMemory}
-          disabled={clearing}
-          className="-mr-1.5 flex min-h-11 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] text-text-primary/60 transition-colors hover:text-text-primary/90 disabled:opacity-40"
-        >
-          Clear memory
-        </button>
+      <header className="sticky top-0 z-10 border-b border-border bg-bg-page/95 backdrop-blur-sm">
+        <div className="mx-auto flex w-full items-center justify-between gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-card text-text-secondary">
+              <BotMessageSquare className="h-4 w-4" strokeWidth={1.75} />
+            </span>
+            <span className="truncate text-[17px] font-medium text-text-primary">
+              Research agent
+            </span>
+          </div>
+
+          {/* Disabled until there is actually something to clear — a live
+              control that silently no-ops reads as a broken button. */}
+          <button
+            type="button"
+            onClick={handleClearMemory}
+            disabled={clearing || isStreaming || !hasMessages}
+            className="shrink-0 rounded-full border border-border bg-surface-card px-3.5 py-2 text-[13px] text-text-secondary transition-colors hover:bg-surface-1 hover:text-text-primary disabled:cursor-not-allowed disabled:border-border/60 disabled:bg-transparent disabled:text-text-muted disabled:hover:bg-transparent disabled:hover:text-text-muted"
+          >
+            {clearing ? "Clearing…" : "Clear conversation"}
+          </button>
+        </div>
       </header>
 
       <div className="mx-auto flex w-full min-w-0 max-w-[720px] flex-1 flex-col">
@@ -374,7 +391,7 @@ export default function Home() {
             aria-live="polite"
             className="status-fade-in mx-auto mb-1.5 flex w-full max-w-[720px] items-center gap-2 px-4 text-[12.5px] tracking-[0.01em]"
           >
-            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-text-primary/35" />
+            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-text-muted" />
             <span className="status-shimmer">
               Usage limit reached — you can send again in {secondsLeft}
               {secondsLeft === 1 ? " second" : " seconds"}.

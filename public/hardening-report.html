@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research Agent Hardening</title>
+<style>
+  :root {
+    --ground: #f5f7f8;
+    --surface-sunk: #eef1f3;
+    --ink: #11171c;
+    --ink-soft: #3b464f;
+    --muted: #66727d;
+    --rule: #dce1e5;
+    --rule-strong: #c3cbd2;
+    --accent: #0d6b6e;
+    --accent-soft: #e3efef;
+    --before: #a03b2c;
+    --after: #196b4d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0d1116;
+      --surface-sunk: #1a2128;
+      --ink: #e7ecf0;
+      --ink-soft: #bcc7d1;
+      --muted: #8b98a4;
+      --rule: #242d36;
+      --rule-strong: #33404b;
+      --accent: #56b6b6;
+      --accent-soft: #16302f;
+      --before: #d97a66;
+      --after: #5cbb8e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0d1116;
+    --surface-sunk: #1a2128;
+    --ink: #e7ecf0;
+    --ink-soft: #bcc7d1;
+    --muted: #8b98a4;
+    --rule: #242d36;
+    --rule-strong: #33404b;
+    --accent: #56b6b6;
+    --accent-soft: #16302f;
+    --before: #d97a66;
+    --after: #5cbb8e;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+
+  header.masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 52px 0 26px;
+  }
+  .kicker {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 16px;
+  }
+  h1 {
+    font-size: clamp(29px, 5vw, 44px);
+    line-height: 1.06;
+    letter-spacing: -.026em;
+    font-weight: 700;
+    margin: 0 0 14px;
+    text-wrap: balance;
+    max-width: 20ch;
+  }
+  .standfirst {
+    font-size: 16.5px;
+    color: var(--ink-soft);
+    margin: 0;
+    max-width: 64ch;
+  }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    border-bottom: 1px solid var(--rule);
+  }
+  .metric { padding: 20px 20px 20px 0; border-right: 1px solid var(--rule); }
+  .metric:last-child { border-right: 0; }
+  .metric-val {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: -.02em;
+    color: var(--accent);
+    display: block;
+    line-height: 1.15;
+  }
+  .metric-label {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 5px;
+    display: block;
+    line-height: 1.45;
+  }
+
+  section { padding: 38px 0; border-bottom: 1px solid var(--rule); }
+  section:last-of-type { border-bottom: 0; }
+
+  .sec-head { display: flex; align-items: baseline; gap: 13px; margin-bottom: 10px; flex-wrap: wrap; }
+  .sec-tag {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  h2 {
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -.018em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  p { max-width: 66ch; }
+  .lede { color: var(--ink-soft); max-width: 66ch; margin: 0 0 20px; }
+
+  .table-scroll { overflow-x: auto; margin-top: 6px; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14px; }
+  caption { text-align: left; font-size: 12.5px; color: var(--muted); padding-bottom: 9px; }
+  th, td { text-align: left; padding: 9px 16px 9px 0; border-bottom: 1px solid var(--rule); }
+  thead th {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  td.num {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .ok { color: var(--after); font-weight: 600; }
+  .bad { color: var(--before); font-weight: 600; }
+
+  .ba {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+  }
+  .ba .was { color: var(--before); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .ba .arrow { color: var(--muted); }
+  .ba .now { color: var(--after); font-weight: 600; }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .88em;
+    background: var(--surface-sunk);
+    padding: 1.5px 5px;
+    border-radius: 2px;
+  }
+
+  ul.tight { margin: 8px 0 0; padding-left: 18px; max-width: 68ch; }
+  ul.tight li { margin-bottom: 9px; color: var(--ink-soft); font-size: 14.5px; }
+  ul.tight li strong { color: var(--ink); font-weight: 620; }
+
+  .note {
+    border-left: 2px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 12px 16px;
+    color: var(--ink-soft);
+    font-size: 14.5px;
+    max-width: 68ch;
+    margin: 18px 0 0;
+    border-radius: 0 2px 2px 0;
+  }
+  .note strong { color: var(--ink); }
+
+  footer {
+    padding: 30px 0 60px;
+    color: var(--muted);
+    font-size: 13px;
+    border-top: 2px solid var(--ink);
+  }
+
+  @media (max-width: 620px) {
+    .metric { border-right: 0; border-bottom: 1px solid var(--rule); padding: 15px 0; }
+    .metric:last-child { border-bottom: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">Reliability report</p>
+    <h1>Research Agent Hardening</h1>
+    <p class="standfirst">
+      A Next.js research agent running on LangGraph and Groq. The first version I shared hit
+      rate limits, hung on failures, and showed raw errors. Here is what I found and fixed.
+      Every number below is measured, not estimated.
+    </p>
+  </header>
+
+  <div class="metrics">
+    <div class="metric">
+      <span class="metric-val">2,917</span>
+      <span class="metric-label">Input tokens per heavy turn, from Groq's own counter</span>
+    </div>
+    <div class="metric">
+      <span class="metric-val">10 / 10</span>
+      <span class="metric-label">Turns clean in a realistic conversation test</span>
+    </div>
+    <div class="metric">
+      <span class="metric-val">350 ms</span>
+      <span class="metric-label">Rate-limit response, was 26 seconds of silence</span>
+    </div>
+    <div class="metric">
+      <span class="metric-val">6</span>
+      <span class="metric-label">Security issues found and fixed</span>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">01 · Diagnosis</span>
+      <h2>The obvious cause was the wrong one</h2>
+    </div>
+    <p class="lede">
+      The assumption was that web search results were flooding the model's context. I measured
+      the real request instead. Search results were 11% of the budget. The system prompt was 55%.
+    </p>
+
+    <div class="table-scroll">
+      <table>
+        <caption>Input cost per request, measured with Groq's <code>prompt_tokens</code></caption>
+        <thead>
+          <tr><th>Component</th><th>Tokens</th><th>Share</th><th>Suspected?</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>System prompt</td><td class="num">419 × 3 calls</td><td class="num">55%</td><td>No</td></tr>
+          <tr><td>Memory summary</td><td class="num">61 × 3 calls</td><td class="num">12%</td><td>Yes</td></tr>
+          <tr><td>Tool definitions</td><td class="num">302 × 3 calls</td><td class="num">11%</td><td>No</td></tr>
+          <tr><td>Web search results</td><td class="num">~160 each</td><td class="num">11%</td><td><strong>Prime suspect</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <strong>Why.</strong> LangGraph resends the whole message history on every step of the
+      agent loop. A two-tool question is three model calls, so every fixed token gets charged
+      three times. Trimming search results, the intuitive fix, could not have solved this.
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">02 · Models</span>
+      <h2>Both halves of the loop have to be tested</h2>
+    </div>
+    <p class="lede">
+      A model has to do two separate things: emit a valid tool call, and write an answer once
+      the tool returns. Passing one says nothing about the other. I found that out after
+      shipping a model that scored 5 out of 5 on tool calls and then returned blank answers.
+    </p>
+
+    <div class="table-scroll">
+      <table>
+        <caption>Five attempts per model, using the real schema and real tool results</caption>
+        <thead>
+          <tr><th>Model</th><th>Tool calls</th><th>Answer after tool</th><th>Verdict</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>gpt-oss-safeguard-20b</code></td><td class="num">5 / 5</td><td class="num">2,511 chars</td><td class="ok">Primary</td></tr>
+          <tr><td><code>gpt-oss-20b</code></td><td class="num">5 / 5</td><td class="num">2,069 chars</td><td class="ok">Fallback</td></tr>
+          <tr><td><code>gpt-oss-120b</code></td><td class="num">5 / 5</td><td class="num bad">0 chars</td><td class="bad">Removed</td></tr>
+          <tr><td><code>llama-3.3-70b</code></td><td class="num bad">1 / 5</td><td class="num">902 chars</td><td class="bad">Rejected</td></tr>
+          <tr><td><code>llama-3.1-8b</code></td><td class="num">4 / 5</td><td class="num">1,109 chars</td><td>Too flaky</td></tr>
+          <tr><td><code>qwen3.6-27b</code></td><td colspan="2">Leaks raw <code>&lt;think&gt;</code> into the answer</td><td class="bad">Rejected</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">
+      The two models in use behave identically on tool calls, so falling back never changes
+      answer quality. Anything added later has to pass both tests first.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">03 · Throughput</span>
+      <h2>What changed</h2>
+    </div>
+    <ul class="tight">
+      <li>
+        <strong>System prompt compressed.</strong> Cut repetition and justification text, not
+        instructions. An automated check confirms all 20 behavioural rules survived the edit.
+        <br><span class="ba"><span class="was">3,619 chars</span><span class="arrow">→</span><span class="now">1,900 chars</span></span>
+      </li>
+      <li>
+        <strong>Model fallback chain.</strong> Each Groq model has its own quota, so a rate
+        limit now retries on the next model instead of failing. This also survives a daily cap,
+        which waiting cannot fix.
+        <br><span class="ba"><span class="was">8K tokens/min</span><span class="arrow">→</span><span class="now">16K pool</span></span>
+      </li>
+      <li>
+        <strong>Cooldown cache.</strong> Real retry-after values are recorded per model, so a
+        request during a limit window answers straight away instead of spending 8 seconds per
+        model rediscovering the block.
+        <br><span class="ba"><span class="was">26,000 ms</span><span class="arrow">→</span><span class="now">350 ms</span></span>
+      </li>
+      <li>
+        <strong>Search budget capped at 3 per turn, in code.</strong> The model was making 8 or
+        more searches for one question and burning 23.9K tokens before running out of steps. A
+        prompt rule was not enough, so the tool itself now refuses past the budget.
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">04 · Failures</span>
+      <h2>Failures degrade instead of breaking</h2>
+    </div>
+    <ul class="tight">
+      <li><strong>Rate limits</strong> arrive as normal messages with the real wait time, never an error screen.</li>
+      <li><strong>Daily and per-minute limits are told apart.</strong> Saying "retry in 13 seconds" when the daily cap is gone is worse than saying nothing.</li>
+      <li><strong>Malformed tool calls</strong> are caught using Groq's <code>tool_use_failed</code> code, not by matching error text. The wording changed four times during this work. The code never did.</li>
+      <li><strong>Step-limit exhaustion</strong> keeps whatever the model produced and explains the stop, instead of throwing the run away.</li>
+      <li><strong>Empty answers</strong> count as a failure and move to the next model, rather than rendering an empty bubble.</li>
+      <li><strong>Invented tool parameters</strong> no longer crash. The model made up four different ones across traces, so the schema now accepts and ignores unknown keys.</li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">05 · Security</span>
+      <h2>Six issues found in review</h2>
+    </div>
+    <ul class="tight">
+      <li>
+        <strong>Remote code execution in the calculator.</strong> Model output was passed to
+        <code>Function()</code> behind a character allowlist, one missed character away from
+        arbitrary execution. Replaced with a parser that can only return a number.
+        Verified against 13 attack strings, all blocked.
+      </li>
+      <li>
+        <strong>SQL filter injection in knowledge-base search.</strong> The PostgREST
+        <code>.or()</code> filter was built by string concatenation with untrusted input, so a
+        crafted query could match every row. Metacharacters are now escaped.
+      </li>
+      <li>
+        <strong>Four input fixes.</strong> Unbounded message input (now capped at 4,000
+        characters), unguarded JSON parsing, unvalidated session IDs, and database errors
+        leaking to the client.
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">06 · Interface</span>
+      <h2>Waiting, and mobile</h2>
+    </div>
+    <ul class="tight">
+      <li><strong>Progress is visible.</strong> A search-heavy answer used to show nothing for 17 seconds. Status now appears at about 1 second and says what is happening, including when a backup model is being tried.</li>
+      <li><strong>The input locks when it has to.</strong> If every model is limited, the composer disables with a live countdown and re-enables itself, instead of letting you send something that cannot work.</li>
+      <li><strong>Answers stopped cutting off mid-word.</strong> A full 9-day itinerary needs about 1,234 output tokens and the cap was 800. Raised to 1,500, with the caveat text limited to one line, the same answer now finishes in 913.</li>
+      <li><strong>Mobile layout fixed.</strong> iOS zooming on input focus, the composer sitting under the home indicator, <code>100vh</code> pushing it off screen, 36px tap targets, and long URLs forcing sideways scroll. Checked at 360px and 390px.</li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">07 · Testing</span>
+      <h2>How it is verified</h2>
+    </div>
+    <p class="lede">
+      Two scripts are committed with the app, so these numbers can be reproduced rather than
+      taken on trust. One drives the live endpoint in four modes and reports latency, tools
+      used, and failure type per turn. The other reports Groq's own token counts per layer of
+      the request.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Test</th><th>Result</th><th>What it means</th></tr></thead>
+        <tbody>
+          <tr><td>10-turn conversation, normal pace</td><td class="ok">10 / 10 clean</td><td>Real use does not hit limits</td></tr>
+          <tr><td>Heavy turns back to back, no pause</td><td class="num">Fails at turn 3</td><td>Free-tier ceiling, not a bug</td></tr>
+          <tr><td>Memory recall across turns</td><td class="ok">Correct</td><td>Earlier context answered accurately</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-tag">08 · Open</span>
+      <h2>Known limits</h2>
+    </div>
+    <ul class="tight">
+      <li><strong>The free tier is the real ceiling.</strong> About 2,900 input tokens per heavy turn against 8,000 per minute per model works out to roughly 2 to 3 demanding questions a minute. Only a paid tier changes that.</li>
+      <li><strong>No auth or per-user rate limiting</strong> on the API routes. That matters for a public deployment, not a demo, and it is a design decision rather than a quick patch.</li>
+      <li><strong>Occasional LaTeX in answers.</strong> The markdown renderer has no math support, so a stray formula shows as source. Diagnosed, cosmetic, deliberately left for later.</li>
+      <li><strong>State is in memory.</strong> Cooldown and token tracking are per instance, not shared across serverless workers.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Measured against <code>openai/gpt-oss-safeguard-20b</code> and <code>openai/gpt-oss-20b</code>
+    on Groq's free tier. Load and token-audit scripts are committed alongside the app.
+  </footer>
+
+</div>
+</body>
+</html>

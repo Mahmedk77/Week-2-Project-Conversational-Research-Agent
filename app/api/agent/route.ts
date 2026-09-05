@@ -7,9 +7,31 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { ReasoningStep } from "@/app/components/types";
 
-// Re-sent as input on every step of the agent loop, so its real cost is
-// roughly 3x this on a two-tool turn.
-const MAX_SUMMARY_CHARS = 400;
+/**
+ * Re-sent as input on every step of the agent loop, so its real cost is
+ * roughly 3x this on a two-tool turn.
+ *
+ * Was 400 (cut from an original 800 during the Groq-only hardening work, to
+ * protect Groq's shared 8K-TPM bucket back when the MAIN agent also ran on
+ * Groq and resent this summary 3x per loop). That reasoning mostly no longer
+ * applies: the main chain is now paid OpenAI (gpt-5-mini/gpt-5, see
+ * lib/models.ts), which has far more headroom — only the summarizer call
+ * itself still touches Groq, and it's one call per turn, not three.
+ *
+ * Raised back up after a real live-testing failure: 400 chars is only enough
+ * for ~1 dense topic. Observed live — Turkey itinerary (turn 1) -> Tokyo
+ * visa/flights (turn 2) -> SaaS churn math (turn 3) — the summarizer's own
+ * prompt ("prioritize the most recent... drop older details") was forced to
+ * drop turn 1 ENTIRELY to fit turn 3 in 400 chars. The main agent then had
+ * zero memory of Turkey and confidently answered "what was the first thing I
+ * asked" with the churn topic instead — and that wrong answer got folded
+ * back into the NEXT summary, entrenching the error. A single rolling
+ * summary can never guarantee unlimited-turn recall, but 1200 chars survives
+ * several more dense topic switches before this recurs. Supabase's
+ * `agent_memory.summary` column is `text` (unbounded), so no schema change
+ * needed if this is raised further.
+ */
+const MAX_SUMMARY_CHARS = 1200;
 
 const load_memory = async (sessionId: string): Promise<string> => {
     const { data, error } = await supabase
@@ -104,6 +126,32 @@ function isToolCallParseError(err: unknown): boolean {
             message
         )
     );
+}
+
+/**
+ * Tool-call arguments do not arrive whole. The model streams them as a JSON
+ * string split across many chunks (`{"`, `expression`, `":"`, `34`, ` *`, …),
+ * and only the very first chunk of a call carries its name and id — on that
+ * chunk the arguments are necessarily still empty. Reassembly is therefore the
+ * caller's job; see the streaming loop below.
+ *
+ * Returns null for anything not yet a complete JSON object, which is the
+ * common case mid-stream. Never throws: a malformed tool call is already
+ * handled downstream by `isToolCallParseError`, and losing the arguments of a
+ * trace entry must never cost the user their answer.
+ */
+function tryParseToolArgs(raw: string): Record<string, unknown> | null {
+    const text = raw.trim();
+    if (!text) return null;
+    try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+        }
+    } catch {
+        // Still mid-stream, or unparseable — keep what the step already has.
+    }
+    return null;
 }
 
 /**
@@ -564,7 +612,7 @@ TOOL USE — default to calling a tool; answering from your own knowledge is the
 
 ANSWERING:
 - Use only what the tools returned; add no facts they didn't provide.
-- Output is hard-capped at ~1500 tokens and gets cut off mid-sentence. Answer the core question first, in full, before any extra detail.
+- Output is hard-capped at ~3000 tokens and gets cut off mid-sentence. Answer the core question first, in full, before any extra detail.
 - Large/multi-part requests (multi-day itineraries, multi-topic plans, long comparisons, "everything about X"): give a compact overview — one line per day/location, or a tight table — not a paragraph each. Expand only the 3-5 most important points, then offer to go deeper on one part instead of pre-writing it all. Short single-fact answers stay direct.
 
 FORMATTING:
@@ -648,6 +696,25 @@ export async function POST(request: Request) {
                 let fullAnswer = "";
                 let emitted = false;
 
+                /**
+                 * Open tool calls whose arguments are still streaming in,
+                 * keyed by the stream slot (`index`) their fragments carry.
+                 *
+                 * `call` points at the object already inside `reasoningTrace`,
+                 * so completed arguments are written straight back into the
+                 * recorded step. That keeps the step in the position it was
+                 * pushed — before its own ToolMessage — while still ending up
+                 * with real arguments. Safe because the trace is serialised
+                 * only once, after this loop finishes.
+                 *
+                 * `index` restarts at 0 on each new model call, so an
+                 * announcement always replaces whatever occupied its slot.
+                 */
+                const openToolArgs = new Map<
+                    number,
+                    { call: { name: string; args: Record<string, unknown> }; raw: string }
+                >();
+
                 const eventStream = await agent.stream(
                     { messages: [{ role: "user" as const, content: userContent }] },
                     { recursionLimit: RECURSION_LIMIT, streamMode: "messages" }
@@ -657,13 +724,41 @@ export async function POST(request: Request) {
                 try {
                     for await (const [chunk] of eventStream) {
                         if (chunk instanceof AIMessageChunk && chunk.tool_calls?.length) {
-                            reasoningTrace.push({
-                                type: "action",
-                                tool_calls: chunk.tool_calls.map((call) => ({
-                                    name: call.name,
-                                    args: call.args,
-                                })),
-                            });
+                            const calls = chunk.tool_calls.map((call) => ({
+                                name: call.name,
+                                args: call.args as Record<string, unknown>,
+                            }));
+                            reasoningTrace.push({ type: "action", tool_calls: calls });
+
+                            // Bind each recorded call to the stream slot whose
+                            // fragments will fill it in. Matched on `id`, not
+                            // array position: a call whose partial args fail to
+                            // parse is dropped from `tool_calls` but still
+                            // present in `tool_call_chunks`, which would shift
+                            // the two lists out of step.
+                            for (const frag of chunk.tool_call_chunks ?? []) {
+                                if (!frag.id || typeof frag.index !== "number") continue;
+                                const position = chunk.tool_calls.findIndex((c) => c.id === frag.id);
+                                if (position === -1) continue;
+                                openToolArgs.set(frag.index, {
+                                    call: calls[position],
+                                    raw: frag.args ?? "",
+                                });
+                            }
+                        }
+                        if (chunk instanceof AIMessageChunk && chunk.tool_call_chunks?.length) {
+                            // The argument fragments themselves, which arrive on
+                            // later chunks where `tool_calls` is empty. An
+                            // id-bearing fragment is an announcement and was
+                            // just handled above, so skip it here.
+                            for (const frag of chunk.tool_call_chunks) {
+                                if (frag.id || typeof frag.index !== "number") continue;
+                                const pending = openToolArgs.get(frag.index);
+                                if (!pending) continue;
+                                pending.raw += frag.args ?? "";
+                                const parsed = tryParseToolArgs(pending.raw);
+                                if (parsed) pending.call.args = parsed;
+                            }
                         }
                         if (chunk instanceof ToolMessage) {
                             reasoningTrace.push({

@@ -36,7 +36,7 @@ const components: Components = {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-text-primary underline decoration-border underline-offset-2 hover:decoration-text-primary/50"
+      className="text-text-primary underline decoration-border underline-offset-2 hover:decoration-text-secondary"
     >
       {children}
     </a>
@@ -47,7 +47,7 @@ const components: Components = {
       return <code className={className}>{children}</code>;
     }
     return (
-      <code className="rounded bg-surface-1 px-1.5 py-0.5 font-mono text-[0.88em] text-text-primary/85">
+      <code className="rounded bg-surface-1 px-1.5 py-0.5 font-mono text-[0.88em] text-text-primary">
         {children}
       </code>
     );
@@ -58,7 +58,7 @@ const components: Components = {
     </pre>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="mb-3 border-l-2 border-border pl-3 text-text-primary/65 last:mb-0">
+    <blockquote className="mb-3 border-l-2 border-border pl-3 text-text-secondary last:mb-0">
       {children}
     </blockquote>
   ),
